@@ -4,8 +4,8 @@ PortSystem              1.0
 PortGroup               github 1.0
 PortGroup               cmake 1.1
 
-github.setup            atomvm atomvm 0.6.0-alpha.1 v
-revision                1
+github.setup            atomvm atomvm 0.6.0-alpha.2 v
+revision                0
 categories              erlang devel
 maintainers             {pguyot @pguyot} openmaintainer
 license                 Apache-2
@@ -23,7 +23,7 @@ checksums               rmd160  e7629010b399cfeba5c89c36fbdd1f4e69075bea \
 depends_build-append    port:erlang \
                         port:elixir \
                         port:gperf
-depends_lib-append      port:openssl3
+depends_lib-append      port:mbedtls3
 
 test.run                yes
 test.cmd                tests/test-erlang && \
