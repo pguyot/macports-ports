@@ -71,6 +71,11 @@ array set crossgcc.versions_info {
         sha256  71e197867611f6054aa1119b13a0c0abac12834765fe2d81f35ac57f84f742d1 \
         size    70533868
     }}
+    10.1.0 {xz {
+        rmd160  eb9c7a9c10fbe5b4ff84818b280248ab97d17769 \
+        sha256  b6898a23844b656f1b68691c5c012036c2e694ac4b53a8918d4712ad876e7ea2 \
+        size    74591240
+    }}
     10.2.0 {xz {
         rmd160  73f182e7d40e5c2988b2b8cd80cfca601f20e9fc \
         sha256  b8dd4368bb9c7f0b98188317ee0254dd8cc99d1e3a18d0ff146c855fe16c1d8c \
