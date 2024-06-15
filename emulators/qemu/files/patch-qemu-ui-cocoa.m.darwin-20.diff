@@ -1,0 +1,12 @@
+--- work/qemu-9.0.1/ui/cocoa.m.orig	2024-06-15 15:20:00
++++ work/qemu-9.0.1/ui/cocoa.m	2024-06-15 15:20:29
+@@ -539,9 +539,6 @@
+ - (NSSize) screenSafeAreaSize
+ {
+     NSSize size = [[[self window] screen] frame].size;
+-    NSEdgeInsets insets = [[[self window] screen] safeAreaInsets];
+-    size.width -= insets.left + insets.right;
+-    size.height -= insets.top + insets.bottom;
+     return size;
+ }
+ 
