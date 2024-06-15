@@ -201,6 +201,10 @@ build.args-append       V=1
 
 default_variants        +usb +spice +vnc +curses
 
+if {${os.platform} eq "darwin" && ${os.major} < 21} {
+    patchfiles-append "patch-qemu-ui-cocoa.m.darwin-20.diff"
+}
+
 foreach t {i386 x86_64 alpha {arm aarch64} cris hppa m68k {microblaze microblazeel} {mips mipsel mips64 mips64el} \
            nios2 or1k {ppc ppc64} riscv32 riscv64 rx s390x {sh4 sh4eb} {sparc sparc64} tricore {xtensa xtensaeb}} {
     variant target_[lindex $t 0] description "Add target support for [join $t {, }]" "append target_list \",[join $t -softmmu,]-softmmu\""
