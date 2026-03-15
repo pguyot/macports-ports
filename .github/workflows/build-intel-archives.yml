@@ -1,0 +1,166 @@
+name: "Build macOS 26 Intel optimized archives"
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run at 03:00 on the 1st of every other month
+    - cron: '0 3 1 */2 *'
+
+concurrency:
+  group: intel-archives
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  MACPORTS_VERSION: "2.12.3"
+  # i9-9880H Coffee Lake optimization flags
+  OPT_CFLAGS: "-O3 -march=coffeelake -mtune=coffeelake"
+
+jobs:
+  build:
+    name: ${{ matrix.group }}
+    runs-on: macos-26-intel
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # geneweb pulls in ocaml + most ocaml-* deps.
+          # We also build the pguyot ocaml ports NOT required by geneweb.
+          - group: geneweb
+            ports: >-
+              geneweb
+              ocaml-pcre2
+              ocaml-bos
+              ocaml-camlp5-buildscripts
+          # atomvm needs erlang + elixir + gperf + mbedtls3
+          - group: atomvm
+            ports: atomvm
+          # eqwalizer needs erlang + sbt + graalvm; elp needs eqwalizer
+          - group: eqwalizer-elp
+            ports: >-
+              eqwalizer
+              elp
+          # Quick builds with minimal deps
+          - group: standalone
+            ports: >-
+              stm32flash
+              newt0
+
+    steps:
+      - name: Checkout ports
+        uses: actions/checkout@v6
+        with:
+          path: ports
+          show-progress: false
+
+      - name: Bootstrap MacPorts
+        env:
+          MP_CI_RELEASE: ${{ env.MACPORTS_VERSION }}
+        run: . ports/.github/workflows/bootstrap.sh
+
+      - name: Configure optimized builds
+        run: |
+          source /opt/local/share/macports/setupenv.bash
+          echo "/opt/local/bin" >> $GITHUB_PATH
+          echo "/opt/local/sbin" >> $GITHUB_PATH
+
+          # Force build from source with Coffee Lake optimization
+          cat <<EOF | sudo tee -a /opt/local/etc/macports/macports.conf >/dev/null
+          buildfromsource always
+          configureccflags ${OPT_CFLAGS}
+          configurecxxflags ${OPT_CFLAGS}
+          EOF
+
+      - name: Build ports
+        run: |
+          set -u
+          fail=0
+          for port in ${{ matrix.ports }}; do
+            echo "::group::Building ${port}"
+            if sudo /opt/local/bin/port -v install "${port}"; then
+              echo "::notice::Successfully built ${port}"
+            else
+              echo "::warning::Failed to build ${port}"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$fail"
+
+      - name: Collect archives
+        if: always()
+        run: |
+          mkdir -p archives
+          find /opt/local/var/macports/software -name "*.tbz2" -exec cp {} archives/ \;
+
+          echo "### Archives (${{ matrix.group }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          ls -1 archives/ 2>/dev/null | while read f; do
+            size=$(du -h "archives/$f" | cut -f1)
+            echo "- \`${f}\` (${size})" >> $GITHUB_STEP_SUMMARY
+          done
+
+      - name: Upload archives
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: archives-${{ matrix.group }}
+          path: archives/
+          retention-days: 90
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: write
+    steps:
+      - name: Download all archives
+        uses: actions/download-artifact@v6
+        with:
+          path: all-archives
+          pattern: archives-*
+          merge-multiple: true
+
+      - name: Deduplicate archives
+        run: |
+          mkdir -p release
+          # Some archives may be built by multiple jobs (shared deps);
+          # keep one copy of each.
+          for f in all-archives/*.tbz2; do
+            [ -f "$f" ] || continue
+            bn=$(basename "$f")
+            cp -n "$f" "release/$bn" 2>/dev/null || true
+          done
+          echo "Total unique archives: $(ls release/*.tbz2 2>/dev/null | wc -l)"
+          ls -lhS release/
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: intel-o3-coffeelake-${{ github.run_number }}
+          name: "macOS 26 Intel -O3 Coffee Lake #${{ github.run_number }}"
+          body: |
+            Optimized MacPorts archives for Intel **i9-9880H** (Coffee Lake).
+            Built with `-O3 -march=coffeelake -mtune=coffeelake` on macOS 26 Intel.
+
+            ## Quick install
+
+            ```bash
+            # Download all archives to a temporary directory
+            gh release download intel-o3-coffeelake-${{ github.run_number }} \
+              --repo ${{ github.repository }} -p '*.tbz2' -D /tmp/mp-archives
+
+            # Install a single port from its archive
+            sudo port install /tmp/mp-archives/<portname>-<version>.darwin_26.x86_64.tbz2
+
+            # Or: configure MacPorts to use these as a local archive source
+            echo "archive_site_local file:///tmp/mp-archives/:tbz2" \
+              | sudo tee -a /opt/local/etc/macports/macports.conf
+            # Then just: sudo port install <portname>
+            ```
+          files: release/*.tbz2
