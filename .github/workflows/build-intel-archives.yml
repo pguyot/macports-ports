@@ -3,7 +3,7 @@ name: "Build macOS 26 Intel optimized archives"
 on:
   workflow_dispatch:
   schedule:
-    # Run every 60 days (1st of every other month)
+    # Run at 03:00 on the 1st of every other month
     - cron: '0 3 1 */2 *'
 
 concurrency:
@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   MACPORTS_VERSION: "2.12.3"
