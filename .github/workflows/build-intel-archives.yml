@@ -2,6 +2,9 @@ name: "Build macOS 26 Intel optimized archives"
 
 on:
   workflow_dispatch:
+  schedule:
+    # Run every 60 days (1st of every other month)
+    - cron: '0 3 1 */2 *'
 
 permissions:
   contents: write
