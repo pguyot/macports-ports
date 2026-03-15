@@ -14,7 +14,7 @@ env:
 jobs:
   build:
     name: ${{ matrix.group }}
-    runs-on: macos-26
+    runs-on: macos-26-intel
     timeout-minutes: 350
     strategy:
       fail-fast: false
@@ -43,75 +43,40 @@ jobs:
               newt0
 
     steps:
-      - name: Enable Rosetta 2
-        run: softwareupdate --install-rosetta --agree-to-license 2>/dev/null || true
-
       - name: Checkout ports
         uses: actions/checkout@v6
         with:
           path: ports
           show-progress: false
 
-      - name: Disable Spotlight
-        run: sudo mdutil -a -i off
+      - name: Bootstrap MacPorts
+        env:
+          MP_CI_RELEASE: ${{ env.MACPORTS_VERSION }}
+        run: . ports/.github/workflows/bootstrap.sh
 
-      - name: Move Homebrew out of the way
+      - name: Configure optimized builds
         run: |
-          sudo mkdir -p /opt/local-off /opt/homebrew-off
-          test ! -d /usr/local || sudo find /usr/local -mindepth 1 -maxdepth 1 -type d -print -exec mv {} /opt/local-off/ \;
-          test ! -d /opt/homebrew || sudo find /opt/homebrew -mindepth 1 -maxdepth 1 -type d -print -exec mv {} /opt/homebrew-off/ \;
-          test ! -d /usr/local || sudo find /usr/local -mindepth 1 -maxdepth 1 -type f -print -delete
-          test ! -d /opt/homebrew || sudo find /opt/homebrew -mindepth 1 -maxdepth 1 -type f -print -delete
-          hash -r
-
-      - name: Build and install MacPorts from source (x86_64 via Rosetta)
-        run: |
-          set -ex
-          /usr/bin/curl -fsSL \
-            "https://github.com/macports/macports-base/releases/download/v${MACPORTS_VERSION}/MacPorts-${MACPORTS_VERSION}.tar.bz2" \
-            -o MacPorts.tar.bz2
-          tar xf MacPorts.tar.bz2
-          cd "MacPorts-${MACPORTS_VERSION}"
-          arch -x86_64 ./configure --prefix=/opt/local
-          arch -x86_64 make -j$(sysctl -n hw.ncpu)
-          sudo arch -x86_64 make install
-          rm -rf MacPorts.tar.bz2 "MacPorts-${MACPORTS_VERSION}"
-
-      - name: Configure MacPorts
-        run: |
+          source /opt/local/share/macports/setupenv.bash
           echo "/opt/local/bin" >> $GITHUB_PATH
           echo "/opt/local/sbin" >> $GITHUB_PATH
 
-          # Use the local ports tree
-          echo "file://${PWD}/ports [default,nosync]" \
-            | sudo tee /opt/local/etc/macports/sources.conf >/dev/null
-
-          # Optimization and build configuration
+          # Force build from source with Coffee Lake optimization
           cat <<EOF | sudo tee -a /opt/local/etc/macports/macports.conf >/dev/null
-          ui_interactive no
           buildfromsource always
           configureccflags ${OPT_CFLAGS}
           configurecxxflags ${OPT_CFLAGS}
-          host_blacklist *.distfiles.macports.org *.packages.macports.org
-          preferred_hosts mirror.fcix.net github.com *.github.com
           EOF
-
-          # Create macports user
-          sudo /opt/local/libexec/macports/postflight/postflight
-
-          # Index the ports tree
-          cd ports && /opt/local/bin/portindex
 
       - name: Build ports
         run: |
-          set -eu
+          set -u
           fail=0
           for port in ${{ matrix.ports }}; do
             echo "::group::Building ${port}"
             if sudo /opt/local/bin/port -v install "${port}"; then
               echo "::notice::Successfully built ${port}"
             else
-              echo "::error::Failed to build ${port}"
+              echo "::warning::Failed to build ${port}"
               fail=1
             fi
             echo "::endgroup::"
@@ -174,7 +139,7 @@ jobs:
           name: "macOS 26 Intel -O3 Coffee Lake #${{ github.run_number }}"
           body: |
             Optimized MacPorts archives for Intel **i9-9880H** (Coffee Lake).
-            Built with `-O3 -march=coffeelake -mtune=coffeelake` on macOS 26 x86_64 (Rosetta 2).
+            Built with `-O3 -march=coffeelake -mtune=coffeelake` on macOS 26 Intel.
 
             ## Quick install
 
