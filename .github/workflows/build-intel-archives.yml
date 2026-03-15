@@ -6,6 +6,10 @@ on:
     # Run every 60 days (1st of every other month)
     - cron: '0 3 1 */2 *'
 
+concurrency:
+  group: intel-archives
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
