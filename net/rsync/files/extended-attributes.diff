@@ -1,0 +1,36 @@
+Accept --extended-attributes for compatibility with Apple's openrsync,
+which sends this flag to the remote rsync process it spawns (even for
+local transfers).  Apple's openrsync uses protocol 29, which cannot
+negotiate xattrs or ACLs with upstream rsync (protocol 30+), so the
+flag is accepted as a no-op to prevent "unknown option" errors.
+
+--- a/options.c
++++ b/options.c
+@@ -585,7 +585,7 @@
+       OPT_USERMAP, OPT_GROUPMAP, OPT_CHOWN, OPT_BWLIMIT, OPT_STDERR,
+       OPT_OLD_COMPRESS, OPT_NEW_COMPRESS, OPT_NO_COMPRESS, OPT_OLD_ARGS,
+       OPT_STOP_AFTER, OPT_STOP_AT,
+-      OPT_REFUSED_BASE = 9000};
++      OPT_EXTENDED_ATTRS, OPT_REFUSED_BASE = 9000};
+
+ static struct poptOption long_options[] = {
+   /* longName, shortName, argInfo, argPtr, value, descrip, argDesc */
+@@ -630,6 +630,7 @@
+   {"xattrs",          'X', POPT_ARG_NONE,   0, 'X', 0, 0 },
+   {"no-xattrs",        0,  POPT_ARG_VAL,    &preserve_xattrs, 0, 0, 0 },
+   {"no-X",             0,  POPT_ARG_VAL,    &preserve_xattrs, 0, 0, 0 },
++  {"extended-attributes", 0, POPT_ARG_NONE, 0, OPT_EXTENDED_ATTRS, 0, 0 },
+   {"times",           't', POPT_ARG_VAL,    &preserve_mtimes, 1, 0, 0 },
+   {"no-times",         0,  POPT_ARG_VAL,    &preserve_mtimes, 0, 0, 0 },
+   {"no-t",             0,  POPT_ARG_VAL,    &preserve_mtimes, 0, 0, 0 },
+@@ -1867,6 +1868,10 @@
+ 			goto cleanup;
+ #endif
+
++		case OPT_EXTENDED_ATTRS:
++			/* Accepted for compatibility with Apple's openrsync. */
++			break;
++
+ 		case OPT_STOP_AFTER: {
+ 			long val;
+ 			arg = poptGetOptArg(pc);
