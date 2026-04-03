@@ -19,6 +19,8 @@ master_sites        https://download.samba.org/pub/rsync/src/
 
 patch.pre_args-replace  -p0 -p1
 
+patchfiles          extended-attributes.diff
+
 if {${subport} eq ${name}} {
     revision            0
 
