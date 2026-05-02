@@ -1,51 +1,38 @@
 PortSystem 1.0
+PortGroup           github 1.0
 
+github.setup        xavierleroy ocamlmpi 1.17 v
 name                ocaml-mpi
-version             1.01
-revision            7
+revision            0
 categories          science devel ocaml
 maintainers         nomaintainer
 license             LGPL-2
 description         Caml bindings for a large subset of MPI functions
 long_description    ${description}
-homepage            http://cristal.inria.fr/~xleroy/software.html
-platforms           darwin
+homepage            https://github.com/xavierleroy/ocamlmpi
 
-master_sites        http://caml.inria.fr/distrib/bazar-ocaml \
-                    https://forge.ocamlcore.org/frs/download.php/329/
-distname            ocamlmpi-${version}
-
-checksums           md5     31e86ecb812832eb9480e2a4c6981608 \
-                    sha1    4f836f02f7e8852ba72d4293aea43cf7a3438b0f \
-                    rmd160  c0a08090073c54e130cd2712c7d1cfbeb8d17793
+checksums           rmd160  736a80bc75842686fb68ffeba5087c630f0b91c1 \
+                    sha256  74b2b9444a760668876cd2838e6a9b29a7230778b0392278a339cb528f91c0c9 \
+                    size    38598
 
 depends_lib         port:ocaml port:ocaml-findlib path:bin/mpicc-mp:mpich-default
 
 patchfiles          Makefile.diff
 
-post-patch {
-    file copy ${filespath}/META ${worksrcpath}
-}
-
 use_configure       no
 use_parallel_build  no
 
-if {[file exists ${prefix}/lib/mpich-mp-devel]} then {
-   build.env           MPIINCDIR=${prefix}/include MPILIBDIR=${prefix}/lib/mpich-mp-devel
-} else {
-   build.env           MPIINCDIR=${prefix}/include MPILIBDIR=${prefix}/lib/mpich-mp
-}
-
-build.target        all
+build.args          MPIINCDIR=${prefix}/include/mpich-mp \
+                    MPILIBDIR=${prefix}/lib/mpich-mp
 
 set ocamlfind_destdir ${destroot}${prefix}/lib/ocaml/site-lib
 destroot.env        "OCAMLFIND_INSTFLAGS=-destdir $ocamlfind_destdir -ldconf ignore" OCAMLFIND_STUBLIBS=${ocamlfind_destdir}/stublibs
-destroot.target     ocamlfind-install
+destroot.target     install
 
 pre-destroot {
     file mkdir $ocamlfind_destdir
 }
 
 livecheck.type      regex
-livecheck.url       http://forge.ocamlcore.org/frs/?group_id=135
-livecheck.regex     "ocamlmpi-(.*?).tar.gz"
+livecheck.url       https://github.com/xavierleroy/ocamlmpi/releases
+livecheck.regex     {v(\d+\.\d+)}

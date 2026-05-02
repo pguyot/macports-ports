@@ -6,7 +6,7 @@ PortGroup           github 1.0
 
 github.setup        ygrek mldonkey 3-2-1 release-
 version             [string map {- .} ${github.version}]
-revision            0
+revision            2
 categories          net p2p
 maintainers         nomaintainer
 license             GPL-2+
@@ -51,6 +51,7 @@ depends_lib-append  port:bzip2 \
                     port:miniupnpc \
                     port:ocaml \
                     port:ocaml-camlp4 \
+                    port:ocaml-camlp-streams \
                     port:ocaml-num \
                     port:xorg-libX11 \
                     port:zlib
@@ -61,6 +62,10 @@ require_active_variants lablgtk2 rsvg
 # finding lablgtk2 via ocamlfind.
 # https://github.com/ygrek/mldonkey/issues/107
 patchfiles-append   patch-lablgtk.diff
+
+# Fix build with OCaml 5: Stream and Genlex moved to camlp-streams library.
+# https://github.com/ygrek/mldonkey/issues/120
+patchfiles-append   patch-ocaml5-camlp-streams.diff
 
 compiler.blacklist-append \
                     *gcc-4.0 *gcc-4.2

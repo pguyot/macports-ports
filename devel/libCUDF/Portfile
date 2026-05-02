@@ -6,7 +6,7 @@ PortGroup           gitlab 1.0
 gitlab.setup        irill cudf 0.10 v
 
 name                libCUDF
-revision            0
+revision            2
 categories          devel ocaml
 maintainers         {cal @neverpanic} openmaintainer
 license             LGPL-3+

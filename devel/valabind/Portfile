@@ -6,7 +6,7 @@ PortGroup           github 1.0
 github.setup        radare valabind 1.8.0
 # Change github.tarball_from to 'releases' or 'archive' next update
 github.tarball_from tarball
-revision            1
+revision            2
 
 categories          devel
 license             GPL-3

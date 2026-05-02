@@ -5,9 +5,8 @@ PortGroup           ocaml 1.0
 
 name                stog
 version             0.8.0
-revision            3
+revision            4
 categories          www ocaml
-platforms           darwin
 license             GPL-3
 maintainers         nomaintainer
 description         stog is a static web site generator, able to handle blog posts as well as regular pages

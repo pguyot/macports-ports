@@ -3,9 +3,8 @@ PortGroup ocaml 1.0
 
 name                ocaml-mysql
 version             1.0.4
-revision            5
+revision            6
 categories          databases devel ocaml
-platforms           darwin
 maintainers         nomaintainer
 license             LGPL-2.1
 description         Mysql5 bindings for OCaml

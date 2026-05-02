@@ -3,7 +3,7 @@ PortGroup           ocaml 1.0
 
 name                ocaml-xtmpl
 version             0.6
-revision            2
+revision            3
 categories          textproc devel ocaml
 maintainers         nomaintainer
 platforms           darwin

@@ -6,6 +6,7 @@ PortGroup           ocaml 1.1
 
 name                ocaml-dune
 github.setup        ocaml dune 3.22.2
+revision            2
 categories          ocaml devel
 license             MIT
 maintainers         {landonf @landonf} openmaintainer
@@ -35,6 +36,23 @@ if { ${subport} eq ${name} } {
                         DUNE_CONFIG__COPY_FILE=portable
     }
     build.target        release
+
+    post-build {
+        # Also build dune-site (cannot be built separately from the dune source tree).
+        # dune-private-libs must be included because dune-site depends on its internal
+        # libraries (dune-section, meta_parser) which are not installed as external packages.
+        system -W ${worksrcpath} "./_boot/dune.exe build \
+            --profile dune-bootstrap -p dune-private-libs,dune-site"
+    }
+
+    post-destroot {
+        # 'make install' only installs the 'dune' package; also install dune-site.
+        system -W ${worksrcpath} "./_boot/dune.exe install \
+            --destdir ${destroot} \
+            --prefix ${prefix} \
+            --libdir ${ocaml.package_dir} \
+            dune-site"
+    }
 }
 
 # See: https://trac.macports.org/ticket/68463
@@ -56,4 +74,21 @@ subport ocaml-dune-build-info {
 
 subport ocaml-xdg {
     ocaml.build_type    dune
+}
+
+subport ocaml-dune-site {
+    # dune-site is built and installed by port:ocaml-dune; building it
+    # separately with --only-packages=dune-site fails because dune-private-libs
+    # is an internal library only available within the dune source tree.
+    # This subport exists so that ports can depend on port:ocaml-dune-site.
+    depends_lib-append  port:ocaml-dune
+    fetch.type          none
+    extract.suffix
+    patchfiles
+    use_configure       no
+    build               {}
+    destroot            {
+        xinstall -m 0755 -d ${destroot}${prefix}/share/doc/${name}
+        system "touch ${destroot}${prefix}/share/doc/${name}/README"
+    }
 }

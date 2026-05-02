@@ -1,15 +1,19 @@
---- c-lib/Makefile.orig
-+++ c-lib/Makefile
-@@ -16,7 +16,8 @@ CUDF_LDFLAGS = -L$(OCAML_LIBDIR) -L$(CURDIR)
- CUDF_CLIBS = -lcudf -lm -ldl -lunix -lncurses -lglib-2.0
+--- c-lib/Makefile.orig	2026-05-29 06:26:05
++++ c-lib/Makefile	2026-06-01 00:00:00
+@@ -12,10 +12,11 @@
+ PROG_CFLAGS = -Wall
+ OCAML_LIBDIR := $(shell ocamlc -where)
+ INCLUDES = -I . -I $(OCAML_LIBDIR) $(shell pkg-config --cflags glib-2.0)
+ CUDF_LDFLAGS = -L$(OCAML_LIBDIR) -L$(CURDIR)
+-CUDF_CLIBS = -lcudf -lm -ldl -lunix -lncurses -lglib-2.0
++CUDF_CLIBS = -lcudf -lm -ldl -lncurses -lglib-2.0
  OCAMLC = ocamlfind ocamlc -package unix,extlib
  OCAMLOPT = ocamlfind ocamlopt -package unix,extlib
 +CUDF_DIR := $(shell ocamlfind query cudf)
 
  INSTALL_STUFF = libcudf.a cudf.h cudf.pc
 
- libcudf.a: cudf-caml.o cudf.o
-@@ -27,14 +28,14 @@ libcudf-opt.a: cudf-caml-opt.o cudf.o
+@@ -27,14 +28,14 @@
  	ar r $@ $^
 
  cudf_c.cmo: cudf_c.ml

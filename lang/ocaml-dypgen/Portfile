@@ -3,9 +3,8 @@ PortGroup ocaml 1.0
 
 name                ocaml-dypgen
 version             20120619-1
-revision            4
+revision            6
 categories          lang devel ocaml
-platforms           darwin
 license             CeCILL-B
 maintainers         nomaintainer
 description         Self-extensible parsers and lexers for the Objective Caml programming language.
@@ -24,10 +23,14 @@ depends_lib         port:ocaml-findlib \
 
 worksrcdir          dypgen
 
-patchfiles          patch-Makefile.diff patch-dyplib-Makefile.diff
+patchfiles          patch-Makefile.diff patch-dyplib-Makefile.diff \
+                    patch-ocaml5.diff
 
 configure {
     reinplace "s|@ocamlfind@|${ocamlfind_wrapper}|g" ${worksrcpath}/dyplib/Makefile
+    # OCaml 5: bytes.[i] indexing syntax was removed; use Bytes.get instead
+    reinplace {s|lexbuf\.lex_buffer\.\[p\]|Bytes.get lexbuf.lex_buffer p|g} \
+        ${worksrcpath}/dyplib/dyplex.ml
 }
 
 use_configure       no
