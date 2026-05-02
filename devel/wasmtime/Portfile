@@ -4,7 +4,7 @@ PortSystem          1.0
 PortGroup           cargo   1.0
 PortGroup           github  1.0
 
-github.setup        bytecodealliance wasmtime 44.0.0 v
+github.setup        bytecodealliance wasmtime 44.0.1 v
 github.tarball_from releases
 distname            ${name}-v${version}-src
 revision            0
@@ -25,9 +25,9 @@ maintainers         {gmail.com:herby.gillot @herbygillot} \
 cargo.offline_cmd
 
 checksums           ${distname}${extract.suffix} \
-                    rmd160  7f7444f282a69330e9be0b462faa5cb7f4064091 \
-                    sha256  52720a299be172aab69c988a58d914a64ca71103dda05c64b1cc584c13f84553 \
-                    size    156741516
+                    rmd160  5a2d4b3b7c6794539235ae6d8007c9d7a72d1606 \
+                    sha256  c3d5c208b80868e5d1b0087858bf40df53df9af7e386a8e03c57fa7db15193cc \
+                    size    156732047
 
 destroot {
     xinstall -m 0755 \
