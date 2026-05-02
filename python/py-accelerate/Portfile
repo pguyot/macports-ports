@@ -1,0 +1,43 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
+PortSystem          1.0
+PortGroup           python 1.0
+
+name                py-accelerate
+version             1.13.0
+revision            0
+
+categories-append   science
+platforms           {darwin any}
+supported_archs     noarch
+license             Apache-2
+maintainers         {pguyot @pguyot} openmaintainer
+
+description         Training and inference at scale made simple, efficient and adaptable
+long_description    {*}${description}
+
+homepage            https://github.com/huggingface/accelerate
+
+python.versions     313 314
+
+checksums           rmd160  dd864cd3fdfaea2d01df952ff58857ffe891bc7a \
+                    sha256  d631b4e0f5b3de4aff2d7e9e6857d164810dfc3237d54d017f075122d057b236 \
+                    size    402835
+
+if {${name} ne ${subport}} {
+    depends_lib-append \
+                    port:py${python.version}-huggingface_hub \
+                    port:py${python.version}-numpy \
+                    port:py${python.version}-packaging \
+                    port:py${python.version}-psutil \
+                    port:py${python.version}-pytorch \
+                    port:py${python.version}-safetensors \
+                    port:py${python.version}-yaml
+
+    post-destroot {
+        set docdir ${prefix}/share/doc/${subport}
+        xinstall -d ${destroot}${docdir}
+        xinstall -m 0644 -W ${worksrcpath} README.md LICENSE \
+            ${destroot}${docdir}
+    }
+}
