@@ -15,7 +15,7 @@ github.setup        root-project root 6-38-04 v
 # Change github.tarball_from to 'releases' or 'archive' next update
 github.tarball_from tarball
 version             [string map {- .} ${github.version}]
-revision            0
+revision            1
 livecheck.version   ${github.version}
 
 # Use git commit
@@ -68,7 +68,7 @@ if {[regexp {macports-clang-(.*)} ${configure.compiler} -> clang_v]} {
     depends_run-append port:clang-${clang_v}
 }
 
-depends_build-append port:pkgconfig port:ninja
+depends_build-append port:pkgconfig
 
 depends_lib-append  port:expat \
                     port:gmp \
