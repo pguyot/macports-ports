@@ -1,0 +1,28 @@
+--- hotspot/make/bsd/makefiles/saproc.make
++++ hotspot/make/bsd/makefiles/saproc.make
+@@ -105,9 +105,11 @@
+
+ ifneq ($(wildcard $(AGENT_DIR)),)
+ ifneq ($(filter-out ia64 arm ppc zero,$(SRCARCH)),)
++ifneq ($(OS_VENDOR), Darwin)
+   BUILDLIBSAPROC = $(LIBSAPROC)
+ endif
+ endif
++endif
+
+
+ ifneq ($(OS_VENDOR), Darwin)
+--- hotspot/make/bsd/makefiles/defs.make
++++ hotspot/make/bsd/makefiles/defs.make
+@@ -360,6 +360,11 @@
+ ADD_SA_BINARIES/ppc   =
+ ADD_SA_BINARIES/ia64  =
+ ADD_SA_BINARIES/arm   =
+ ADD_SA_BINARIES/zero  =
+
++ifeq ($(OS_VENDOR), Darwin)
++  ADD_SA_BINARIES/x86       = $(EXPORT_LIB_DIR)/sa-jdi.jar
++  ADD_SA_BINARIES/universal = $(EXPORT_LIB_DIR)/sa-jdi.jar
++endif
++
+ EXPORT_LIST += $(ADD_SA_BINARIES/$(HS_ARCH))

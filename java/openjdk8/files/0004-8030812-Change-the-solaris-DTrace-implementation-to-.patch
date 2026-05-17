@@ -1506,16 +1506,6 @@ index d60f751af9c..6c9f9b219ce 100644
  #endif /* USDT2 */
    JDK1_1InitArgs *args = (JDK1_1InitArgs *)args_;
    jint ret = JNI_ERR;
-@@ -5190,8 +5074,7 @@
- #ifndef USDT2
-   HS_DTRACE_PROBE3(hotspot_jni, CreateJavaVM__entry, vm, penv, args);
- #else /* USDT2 */
--  HOTSPOT_JNI_CREATEJAVAVM_ENTRY(
--                                 (void **) vm, penv, args);
-+  HOTSPOT_JNI_CREATEJAVAVM_ENTRY((void **) vm, penv, args);
- #endif /* USDT2 */
- 
-   jint result = JNI_ERR;
 @@ -5309,8 +5192,7 @@
    HS_DTRACE_PROBE3(hotspot_jni, GetCreatedJavaVMs__entry, \
      vm_buf, bufLen, numVMs);
@@ -1536,16 +1526,6 @@ index d60f751af9c..6c9f9b219ce 100644
  #endif /* USDT2 */
    return JNI_OK;
  }
-@@ -5340,8 +5221,7 @@
- #ifndef USDT2
-   DTRACE_PROBE1(hotspot_jni, DestroyJavaVM__entry, vm);
- #else /* USDT2 */
--  HOTSPOT_JNI_DESTROYJAVAVM_ENTRY(
--                                  vm);
-+  HOTSPOT_JNI_DESTROYJAVAVM_ENTRY(vm);
- #endif /* USDT2 */
-   jint res = JNI_ERR;
-   DT_RETURN_MARK(DestroyJavaVM, jint, (const jint&)res);
 @@ -5493,15 +5373,13 @@
  #ifndef USDT2
    DTRACE_PROBE3(hotspot_jni, AttachCurrentThread__entry, vm, penv, _args);
