@@ -1,0 +1,30 @@
+--- common/autoconf/libraries.m4
++++ common/autoconf/libraries.m4
+@@ -345,12 +345,6 @@
+   if test "x$with_freetype_include" != "x" && \
+       test "x$with_freetype_lib" != "x" ; then
+     FREETYPE_TO_USE=system
+-  fi
+-
+-  if test "x$FREETYPE_TO_USE" = "xsystem" && \
+-     (test "x$OPENJDK_TARGET_OS" = "xwindows" || \
+-     test "x$OPENJDK_TARGET_OS" = "xmacosx"); then
+-    AC_MSG_ERROR([Only bundled freetype can be specified on Mac and Windows])
+   fi
+
+   if test "x$with_freetype_include" != "x" ; then
+--- common/autoconf/generated-configure.sh
++++ common/autoconf/generated-configure.sh
+@@ -45170,12 +45170,6 @@
+   if test "x$with_freetype_include" != "x" && \
+       test "x$with_freetype_lib" != "x" ; then
+     FREETYPE_TO_USE=system
+-  fi
+-
+-  if test "x$FREETYPE_TO_USE" = "xsystem" && \
+-     (test "x$OPENJDK_TARGET_OS" = "xwindows" || \
+-     test "x$OPENJDK_TARGET_OS" = "xmacosx"); then
+-    as_fn_error $? "Only bundled freetype can be specified on Mac and Windows" "$LINENO" 5
+   fi
+
+   if test "x$with_freetype_include" != "x" ; then

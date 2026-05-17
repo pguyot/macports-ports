@@ -2,15 +2,14 @@ diff --git a/common/autoconf/flags.m4 b/common/autoconf/flags.m4
 index 73b2e76511e..8b321480193 100644
 --- common/autoconf/flags.m4
 +++ common/autoconf/flags.m4
-@@ -705,6 +705,10 @@ AC_DEFUN_ONCE([FLAGS_SETUP_COMPILER_FLAGS_FOR_JDK],
-       # command line.
-       CCXXFLAGS_JDK="$CCXXFLAGS_JDK -DMAC_OS_X_VERSION_MAX_ALLOWED=\$(subst .,,\$(MACOSX_VERSION_MIN)) -mmacosx-version-min=\$(MACOSX_VERSION_MIN)"
-       LDFLAGS_JDK="$LDFLAGS_JDK -mmacosx-version-min=\$(MACOSX_VERSION_MIN)"
-+      if test "$OPENJDK_TARGET_CPU_ARCH" = "xaarch64"
-+        CFLAGS_JDK="${CFLAGS_JDK} -arch arm64"
-+        LDFLAGS_JDK="${LDFLAGS_JDK} -arch arm64"
-+      fi
-     fi
+@@ -675,4 +675,8 @@ AC_DEFUN_ONCE([FLAGS_SETUP_COMPILER_FLAGS_FOR_JDK],
+     # command line.
+     CCXXFLAGS_JDK="$CCXXFLAGS_JDK -DMAC_OS_X_VERSION_MAX_ALLOWED=\$(subst .,,\$(MACOSX_VERSION_MIN)) -mmacosx-version-min=\$(MACOSX_VERSION_MIN)"
+     LDFLAGS_JDK="$LDFLAGS_JDK -mmacosx-version-min=\$(MACOSX_VERSION_MIN)"
++    if test "x$OPENJDK_TARGET_CPU_ARCH" = "xaarch64" ; then
++      CFLAGS_JDK="${CFLAGS_JDK} -arch arm64"
++      LDFLAGS_JDK="${LDFLAGS_JDK} -arch arm64"
++    fi
    fi
  
 diff --git a/common/autoconf/generated-configure.sh b/common/autoconf/generated-configure.sh
@@ -67,6 +66,15 @@ index b0b30333936..a2ae79c0402 100644
        ;;
      aarch64)
        VAR_CPU=aarch64
+@@ -43401,4 +43401,8 @@
+     # command line.
+     CCXXFLAGS_JDK="$CCXXFLAGS_JDK -DMAC_OS_X_VERSION_MAX_ALLOWED=\$(subst .,,\$(MACOSX_VERSION_MIN)) -mmacosx-version-min=\$(MACOSX_VERSION_MIN)"
+     LDFLAGS_JDK="$LDFLAGS_JDK -mmacosx-version-min=\$(MACOSX_VERSION_MIN)"
++    if test "x$OPENJDK_TARGET_CPU_ARCH" = "xaarch64" ; then
++      CFLAGS_JDK="${CFLAGS_JDK} -arch arm64"
++      LDFLAGS_JDK="${LDFLAGS_JDK} -arch arm64"
++    fi
+   fi
 diff --git a/common/autoconf/platform.m4 b/common/autoconf/platform.m4
 index 51df988f619..c51829f5f24 100644
 --- common/autoconf/platform.m4

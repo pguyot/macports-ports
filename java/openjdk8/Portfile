@@ -11,11 +11,11 @@ name                openjdk8
 # https://github.com/openjdk/jdk8u/tags
 # Tags: https://github.com/openjdk/jdk8u/tags
 set major 8
-set update 372
+set update 492
 # Set to the build of the 'jdk8u${update}-b${build}' tag that corresponds to the latest tag with '-ga'
-set build 07
+set build 09
 version             ${major}u${update}
-revision            2
+revision            0
 categories          java devel
 supported_archs     ppc x86_64 arm64
 license             GPL-2+
@@ -49,12 +49,11 @@ if {${configure.build_arch} eq "ppc"} {
 } else {
     # x86* and arm64
 
-checksums           rmd160  7ffec6da71e24d2913b717b5f31d6be9c2fa7b7e \
-                    sha256  3235a744b51896beb1e8b738412982ebc06e2affb9d50ae3371203d9a46504da \
-                    size    88002433
+checksums           rmd160  841ea1ebdeebd8ddeb7755469fc117127ba6cd56 \
+                    sha256  3744ed83399b4646c6b64cb7ec3539ed43917edae56378e9853a62ede670a9b7 \
+                    size    93934156
 
 patchfiles          0001-8181503-Can-t-compile-hotspot-with-c-11.patch \
-                    0002-Support-XCode-3-14.patch \
                     0003-Ignore-__NSAutoreleaseNoPool-errors.patch \
                     0004-8030812-Change-the-solaris-DTrace-implementation-to-.patch \
                     0005-os_perf_bsd-allow-to-compile-with-ZERO-CPU.patch \
@@ -62,7 +61,10 @@ patchfiles          0001-8181503-Can-t-compile-hotspot-with-c-11.patch \
                     0007-Added-macosx-bin-zero-jvm.cfg.patch \
                     0008-ExtendedOptionsImpl.c-define-TCP_KEEPINTVL-and-TCP_K.patch \
                     Support-arm64-and-fix-zero-assembler.diff \
-                    finite.patch
+                    0012-fix-const-qualifiers-in-zero-copy-declarations.patch \
+                    finite.patch \
+                    0010-Allow-system-freetype-on-macOS.patch \
+                    0011-Disable-SA-on-macOS.patch
 
 # NSFullSizeContentViewWindowMask is available since 10.10
 if {${os.platform} eq "darwin" && ${os.major} < 14} {
@@ -100,12 +102,33 @@ post-patch {
 configure.cmd       ${prefix}/bin/bash ./configure
 configure.pre_args  --prefix=${tpath}
 set bug_url "https://trac.macports.org/newticket?port=${name}"
+
+# JavaNativeFoundation headers are absent from macOS 12+ SDKs; search older CommandLineTools SDKs
+set jnf_cflags ""
+set jnf_header "JavaNativeFoundation.framework/Versions/A/Headers/JavaNativeFoundation.h"
+foreach jnf_path [lsort -decreasing \
+    [glob -nocomplain /Library/Developer/CommandLineTools/SDKs/MacOSX11.*.sdk/System/Library/Frameworks]] {
+    if {[file exists "${jnf_path}/${jnf_header}"]} {
+        set jnf_cflags " -F${jnf_path}"
+        break
+    }
+}
+if {${jnf_cflags} eq ""} {
+    foreach jnf_path [lsort -decreasing \
+        [glob -nocomplain /Library/Developer/CommandLineTools/SDKs/MacOSX10.*.sdk/System/Library/Frameworks/JavaVM.framework/Frameworks]] {
+        if {[file exists "${jnf_path}/${jnf_header}"]} {
+            set jnf_cflags " -F${jnf_path}"
+            break
+        }
+    }
+}
+
 # default configure args
 configure.args      --with-debug-level=release \
                     --with-freetype-include=${prefix}/include/freetype2 \
                     --with-freetype-lib=${prefix}/lib \
                     --with-target-bits=${datamodel} \
-                    --with-extra-cflags="${configure.cflags}" \
+                    --with-extra-cflags="${configure.cflags}${jnf_cflags}" \
                     --with-extra-cxxflags="${configure.cxxflags}" \
                     --with-extra-ldflags="${configure.ldflags}" \
                     --with-milestone=fcs \
@@ -174,7 +197,7 @@ variant server \
 variant release \
     conflicts debug \
     description {OpenJDK with no debug information, all optimizations and no asserts} {
-    configure.args-append  --with-debug-level=release 
+    configure.args-append  --with-debug-level=release
 }
 
 variant debug \
