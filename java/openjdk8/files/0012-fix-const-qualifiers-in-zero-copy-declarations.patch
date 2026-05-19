@@ -2,9 +2,9 @@ Fix conflicting types errors with newer clang by adding const to the from
 parameter in copy.hpp declarations and atomic_copy64 in os_bsd_zero.hpp,
 matching the definitions already present in os_bsd_zero.cpp.
 
-diff --git a/hotspot/src/share/vm/utilities/copy.hpp b/hotspot/src/share/vm/utilities/copy.hpp
---- a/hotspot/src/share/vm/utilities/copy.hpp
-+++ b/hotspot/src/share/vm/utilities/copy.hpp
+diff --git hotspot/src/share/vm/utilities/copy.hpp hotspot/src/share/vm/utilities/copy.hpp
+--- hotspot/src/share/vm/utilities/copy.hpp
++++ hotspot/src/share/vm/utilities/copy.hpp
 @@ -41,14 +41,14 @@
    void _Copy_conjoint_bytes(void* from, void* to, size_t count);
 
@@ -27,9 +27,9 @@ diff --git a/hotspot/src/share/vm/utilities/copy.hpp b/hotspot/src/share/vm/util
 +  void _Copy_arrayof_conjoint_jlongs (const HeapWord* from, HeapWord* to, size_t count);
    void _Copy_arrayof_conjoint_oops   (HeapWord* from, HeapWord* to, size_t count);
  }
-diff --git a/hotspot/src/os_cpu/bsd_zero/vm/os_bsd_zero.hpp b/hotspot/src/os_cpu/bsd_zero/vm/os_bsd_zero.hpp
---- a/hotspot/src/os_cpu/bsd_zero/vm/os_bsd_zero.hpp
-+++ b/hotspot/src/os_cpu/bsd_zero/vm/os_bsd_zero.hpp
+diff --git hotspot/src/os_cpu/bsd_zero/vm/os_bsd_zero.hpp hotspot/src/os_cpu/bsd_zero/vm/os_bsd_zero.hpp
+--- hotspot/src/os_cpu/bsd_zero/vm/os_bsd_zero.hpp
++++ hotspot/src/os_cpu/bsd_zero/vm/os_bsd_zero.hpp
 @@ -36,4 +36,4 @@
 
    // Atomically copy 64 bits of data
