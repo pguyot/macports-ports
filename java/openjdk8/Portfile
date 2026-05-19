@@ -103,24 +103,26 @@ configure.cmd       ${prefix}/bin/bash ./configure
 configure.pre_args  --prefix=${tpath}
 set bug_url "https://trac.macports.org/newticket?port=${name}"
 
-# JavaNativeFoundation headers are absent from macOS 12+ SDKs; search older CommandLineTools SDKs
+# JavaNativeFoundation headers are absent from macOS 12+ SDKs; search older SDKs
 set jnf_cflags ""
 set jnf_header "JavaNativeFoundation.framework/Versions/A/Headers/JavaNativeFoundation.h"
-foreach jnf_path [lsort -decreasing \
-    [glob -nocomplain /Library/Developer/CommandLineTools/SDKs/MacOSX11.*.sdk/System/Library/Frameworks]] {
-    if {[file exists "${jnf_path}/${jnf_header}"]} {
-        set jnf_cflags " -F${jnf_path}"
-        break
-    }
-}
-if {${jnf_cflags} eq ""} {
-    foreach jnf_path [lsort -decreasing \
-        [glob -nocomplain /Library/Developer/CommandLineTools/SDKs/MacOSX10.*.sdk/System/Library/Frameworks/JavaVM.framework/Frameworks]] {
+foreach jnf_pattern [list \
+    /Library/Developer/CommandLineTools/SDKs/MacOSX11.*.sdk/System/Library/Frameworks \
+    /Applications/Xcode*.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.*.sdk/System/Library/Frameworks \
+    /Library/Developer/CommandLineTools/SDKs/MacOSX10.*.sdk/System/Library/Frameworks/JavaVM.framework/Frameworks \
+    /Applications/Xcode*.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.*.sdk/System/Library/Frameworks/JavaVM.framework/Frameworks \
+] {
+    if {${jnf_cflags} ne ""} break
+    foreach jnf_path [lsort -decreasing [glob -nocomplain ${jnf_pattern}]] {
         if {[file exists "${jnf_path}/${jnf_header}"]} {
             set jnf_cflags " -F${jnf_path}"
             break
         }
     }
+}
+# Fall back to headers bundled with this port when no SDK provides them
+if {${jnf_cflags} eq ""} {
+    set jnf_cflags " -F${filespath}"
 }
 
 # default configure args
