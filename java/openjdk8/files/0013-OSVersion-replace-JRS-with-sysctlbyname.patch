@@ -1,0 +1,18 @@
+--- jdk/src/macosx/native/sun/awt/OSVersion.m
++++ jdk/src/macosx/native/sun/awt/OSVersion.m
+@@ -28,7 +28,14 @@
+ #include <math.h>
+ #include <stdlib.h>
+ #include <stdio.h>
+-#import <JavaRuntimeSupport/JavaRuntimeSupport.h>
++#include <sys/sysctl.h>
++#include <string.h>
++static char *JRSCopyOSVersion(void) {
++    char ver[64] = "0.0.0";
++    size_t len = sizeof(ver);
++    sysctlbyname("kern.osproductversion", ver, &len, NULL, 0);
++    return strdup(ver);
++}
+
+
+ // returns 107 for Lion, 106 for SnowLeopard etc.

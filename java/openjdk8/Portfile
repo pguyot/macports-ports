@@ -64,7 +64,8 @@ patchfiles          0001-8181503-Can-t-compile-hotspot-with-c-11.patch \
                     0012-fix-const-qualifiers-in-zero-copy-declarations.patch \
                     finite.patch \
                     0010-Allow-system-freetype-on-macOS.patch \
-                    0011-Disable-SA-on-macOS.patch
+                    0011-Disable-SA-on-macOS.patch \
+                    0013-OSVersion-replace-JRS-with-sysctlbyname.patch
 
 # NSFullSizeContentViewWindowMask is available since 10.10
 if {${os.platform} eq "darwin" && ${os.major} < 14} {
@@ -103,27 +104,11 @@ configure.cmd       ${prefix}/bin/bash ./configure
 configure.pre_args  --prefix=${tpath}
 set bug_url "https://trac.macports.org/newticket?port=${name}"
 
-# JavaNativeFoundation headers are absent from macOS 12+ SDKs; search older SDKs
-set jnf_cflags ""
-set jnf_header "JavaNativeFoundation.framework/Versions/A/Headers/JavaNativeFoundation.h"
-foreach jnf_pattern [list \
-    /Library/Developer/CommandLineTools/SDKs/MacOSX11.*.sdk/System/Library/Frameworks \
-    /Applications/Xcode*.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.*.sdk/System/Library/Frameworks \
-    /Library/Developer/CommandLineTools/SDKs/MacOSX10.*.sdk/System/Library/Frameworks/JavaVM.framework/Frameworks \
-    /Applications/Xcode*.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.*.sdk/System/Library/Frameworks/JavaVM.framework/Frameworks \
-] {
-    if {${jnf_cflags} ne ""} break
-    foreach jnf_path [lsort -decreasing [glob -nocomplain ${jnf_pattern}]] {
-        if {[file exists "${jnf_path}/${jnf_header}"]} {
-            set jnf_cflags " -F${jnf_path}"
-            break
-        }
-    }
-}
-# Fall back to headers bundled with this port when no SDK provides them
-if {${jnf_cflags} eq ""} {
-    set jnf_cflags " -F${filespath}"
-}
+# JavaNativeFoundation headers are absent from macOS 12+ SDKs.
+# Bundled headers are placed in ${worksrcpath}/jnf-include/JavaNativeFoundation/
+# by post-patch so that -I${worksrcpath}/jnf-include resolves all
+# <JavaNativeFoundation/X> imports across the entire JDK source tree.
+set jnf_cflags " -I${worksrcpath}/jnf-include"
 
 # default configure args
 configure.args      --with-debug-level=release \
@@ -161,6 +146,13 @@ if { [string match *clang* ${configure.compiler}] } {
 build.pre_args-prepend \
                     COMPILER_WARNINGS_FATAL=false
 
+# On macOS 15+ (darwin 24+), disable dtrace probes entirely so hotspot does not
+# try to include the non-generated dtracefiles/hotspot.h
+if {${os.platform} eq "darwin" && ${os.major} >= 24} {
+    build.pre_args-append \
+                    HOTSPOT_DISABLE_DTRACE_PROBES=1
+}
+
 post-patch {
     # NOTE: JDK had hardcoded MACOSX_VERSION_MIN as 10.9.0 when uses clang toolchain
     # and 10.7.0 for gcc toolchain.
@@ -168,6 +160,28 @@ post-patch {
         reinplace "s|MACOSX_VERSION_MIN=10.9.0|MACOSX_VERSION_MIN=10.7.0|g" \
             ${worksrcpath}/common/autoconf/flags.m4 \
             ${worksrcpath}/common/autoconf/generated-configure.sh
+    }
+}
+
+post-patch {
+    # Place bundled JNF headers at jnf-include/JavaNativeFoundation/ so that
+    # -I${worksrcpath}/jnf-include resolves <JavaNativeFoundation/X> for all
+    # JDK native code without patching individual source files.
+    set jnf_src ${filespath}/JavaNativeFoundation.framework/Headers
+    set jnf_dst ${worksrcpath}/jnf-include/JavaNativeFoundation
+    file mkdir ${jnf_dst}
+    foreach f [glob ${jnf_src}/*.h] {
+        file copy ${f} ${jnf_dst}
+    }
+    # Fix internal JNF cross-imports and the missing JavaVM/jni.h
+    foreach f [glob ${jnf_dst}/*.h] {
+        reinplace "s|#import <JavaNativeFoundation/\\(.*\\)>|#import \"\\1\"|g" ${f}
+        reinplace "s|#import <JavaVM/jni.h>|#include <jni.h>|g" ${f}
+    }
+    # On macOS 15+ (darwin 24+), dtrace preprocessing passes /dev/fd/N to clang which fails
+    if {${os.platform} eq "darwin" && ${os.major} >= 24} {
+        reinplace "s/^dtrace_gen_headers:.*/dtrace_gen_headers:/" \
+            ${worksrcpath}/hotspot/make/bsd/makefiles/dtrace.make
     }
 }
 
@@ -221,10 +235,10 @@ variant zero \
     set archuc [string toupper ${configure.build_arch}]
     depends_lib-append         port:libffi
     configure.args-append  --with-jvm-variants=zero \
-                           --with-extra-cflags="${configure.cflags} -I${prefix}/include -arch ${configure.build_arch}" \
+                           --with-extra-cflags="${configure.cflags}${jnf_cflags} -I${prefix}/include -arch ${configure.build_arch}" \
                            --with-extra-cxxflags="${configure.cxxflags} -arch ${configure.build_arch}" \
                            --with-extra-ldflags="${configure.ldflags} -I${prefix}/lib -arch ${configure.build_arch}"
-    configure.args-delete  --with-extra-cflags="${configure.cflags}" \
+    configure.args-delete  --with-extra-cflags="${configure.cflags}${jnf_cflags}" \
                            --with-extra-cxxflags="${configure.cxxflags}" \
                            --with-extra-ldflags="${configure.ldflags}"
 }
@@ -235,10 +249,10 @@ variant zeroshark \
     set archuc [string toupper ${configure.build_arch}]
     depends_lib-append         port:libffi
     configure.args-append  --with-jvm-variants=zeroshark \
-                           --with-extra-cflags="${configure.cflags} -I${prefix}/include -arch ${configure.build_arch}" \
+                           --with-extra-cflags="${configure.cflags}${jnf_cflags} -I${prefix}/include -arch ${configure.build_arch}" \
                            --with-extra-cxxflags="${configure.cxxflags} -arch ${configure.build_arch}" \
                            --with-extra-ldflags="${configure.ldflags} -I${prefix}/lib -arch ${configure.build_arch}"
-    configure.args-delete  --with-extra-cflags="${configure.cflags}" \
+    configure.args-delete  --with-extra-cflags="${configure.cflags}${jnf_cflags}" \
                            --with-extra-cxxflags="${configure.cxxflags}" \
                            --with-extra-ldflags="${configure.ldflags}"
 }
