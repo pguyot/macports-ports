@@ -6,7 +6,7 @@ PortGroup       java 1.0
 name            gnu-classpath
 set my_name     classpath
 version         0.99
-revision        0
+revision        1
 maintainers     nomaintainer
 categories      java
 # has a runtime exception similar to gcc's
