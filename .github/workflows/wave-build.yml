@@ -1,0 +1,332 @@
+# Prototype replacement for main.yml that builds changed subports in
+# dependency-ordered waves instead of building all subports sequentially in a
+# single job.
+#
+# Motivation (see lang/llvm-22: a Portfile touch implies rebuilding llvm-22,
+# clang-22, flang-22, lldb-22, mlir-22, libclc-22, spirv-llvm-translator-22):
+#   * a single job hits GitHub's hard 6-hour limit long before all subports
+#     are built, even though no single subport needs more than ~1.5 h;
+#   * subports of a multi-port PR may depend on each other (flang-22 needs the
+#     PR's clang-22 and mlir-22, not the published master binaries).
+#
+# Design:
+#   * `setup` computes the changed subports, lints them, and topologically
+#     sorts them into "waves" of chunks (compute-waves.py): every subport in
+#     wave N depends only on subports in waves < N; chunks within a wave are
+#     independent.
+#   * wave jobs are chained with `needs:`; each builds its chunks in parallel
+#     via a matrix, one runner per (os, chunk), each with a fresh 6-hour
+#     budget; subports within a chunk build sequentially to amortize the
+#     MacPorts bootstrap.
+#   * each job uploads the archives it built; later waves place those archives
+#     in ${portdbpath}/incoming/verified/ so changed dependencies resolve to
+#     the PR-built binaries (see wave.yml).
+#
+# GitHub Actions cannot create a dynamic number of chained jobs, so waves
+# deeper than 12 collapse into the last wave; install-dependencies rebuilds a
+# same-wave dependency from source when it has no archive, which keeps the
+# result correct at the cost of some redundant work.
+#
+# While prototyping this runs only on wave-ci/** branches to avoid duplicating
+# main.yml; to adopt it for PRs, move main.yml's triggers here and retire the
+# build job there.
+name: "lint & build changed ports in waves"
+
+on:
+  push:
+    branches:
+      - 'wave-ci/**'
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    name: compute waves
+    runs-on: macos-15
+    outputs:
+      waves: ${{ steps.waves.outputs.waves }}
+      num_waves: ${{ steps.waves.outputs.num_waves }}
+      wave_names: ${{ steps.waves.outputs.wave_names }}
+    steps:
+      - name: Checkout ports
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 64
+          path: ports
+          show-progress: false
+      - name: Checkout mpbb
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          repository: macports/mpbb
+          path: mpbb
+          show-progress: false
+      - name: Set checkout permissions
+        run: |
+            chmod -R a+rX ./ports
+            CUR_DIR="$(dirname "$(realpath ./ports)")"
+            while [ -n "$CUR_DIR" -a "$CUR_DIR" != "/" ]; do
+                sudo chmod a+rx "$CUR_DIR"
+                CUR_DIR="$(dirname "$CUR_DIR")"
+            done
+      - name: Bootstrap MacPorts
+        env:
+            MP_CI_RELEASE: ${{ vars.MP_CI_RELEASE }}
+        run: . ports/.github/workflows/bootstrap.sh mpbb
+      - name: Determine list of changed ports
+        id: portlist
+        run: |
+          set -eu
+          # Add getopt, mpbb and the MacPorts paths to $PATH for the subsequent
+          # steps.
+          echo "/opt/mports/bin" >> $GITHUB_PATH
+          echo "${PWD}/mpbb" >> $GITHUB_PATH
+          echo "/opt/local/bin" >> $GITHUB_PATH
+          echo "/opt/local/sbin" >> $GITHUB_PATH
+
+          portlist=$( \
+            git -C ports/ diff --name-only --diff-filter=AM macports/master...@ \
+              | grep -E '^[^._/][^/]*/[^/]+/(Portfile$|files/)' \
+              | cut -d/ -f2 \
+              | sort -u \
+              | tr '\n' ' ' \
+              | sed 's/ $//')
+
+          echo "$portlist"
+          echo "portlist=$portlist" >> $GITHUB_OUTPUT
+
+      - name: Determine list of subports from portlist
+        id: subportlist
+        run: |
+          set -eu
+
+          echo "#### Changed Ports" >> $GITHUB_STEP_SUMMARY
+
+          subportlist=""
+          echo "::group::Listing subports"
+          new_subports=$(mpbb \
+              --work-dir /tmp/mpbb \
+              list-subports \
+              --archive-site= \
+              --archive-site-private= \
+              --include-deps=no \
+              $portlist \
+              | tr '\n' ' ')
+          for subport in $new_subports; do
+            echo "$subport"
+            echo "- ${subport}" >> $GITHUB_STEP_SUMMARY
+            subportlist="$subportlist $subport"
+          done
+          echo "::endgroup::"
+
+          echo "subportlist=${subportlist}" >> $GITHUB_OUTPUT
+        env:
+          portlist: ${{ steps.portlist.outputs.portlist }}
+      - name: Run port lint for all changed subports
+        # Trial: keep lint visible but non-blocking so a lint error does not
+        # prevent the wave builds. Remove for main.yml parity.
+        continue-on-error: true
+        run: |
+          set -eu
+
+          echo "#### Lint Results" >> $GITHUB_STEP_SUMMARY
+
+          fail=0
+          for subport in $subportlist; do
+            echo "::group::${subport}"
+            path=$(port file "$subport")
+            messagetype="warning"
+            if ! messages=$(port -q lint "$subport" 2>&1); then
+              messagetype="error"
+              fail=1
+            fi
+
+
+            if [ -n "$messages" ]; then
+              echo "$messages"
+
+              if [ "$fail" -eq 1 ]; then
+                echo "##### ❌ ${subport}" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "##### ⚠️ ${subport}" >> $GITHUB_STEP_SUMMARY
+              fi
+              printf '```\n%s\n```\n' "$messages" >> $GITHUB_STEP_SUMMARY
+
+              # See https://github.com/actions/toolkit/issues/193#issuecomment-605394935
+              encoded_messages="port lint ${subport}:%0A"
+              encoded_messages+="$(echo "${messages}" | sed -E 's/$/%0A/g' | tr -d '\n')"
+              echo "::${messagetype} file=${path#${PWD}/ports/},line=1,col=1::${encoded_messages}"
+            else
+                echo "##### ✅ ${subport}" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "::endgroup::"
+          done
+
+          exit "$fail"
+        env:
+          subportlist: ${{ steps.subportlist.outputs.subportlist }}
+      - name: Compute dependency waves
+        id: waves
+        run: |
+          set -eu
+          # compute-waves.py also writes the `waves` and `num_waves` step
+          # outputs to $GITHUB_OUTPUT itself. Waves deeper than --max-waves
+          # collapse into the last wave; install-dependencies rebuilds any
+          # same-wave dependency from source, so this stays correct.
+          ./ports/.github/workflows/compute-waves.py --max-waves 12 $subportlist > /tmp/waves.json
+
+          echo "#### Build Waves" >> $GITHUB_STEP_SUMMARY
+          python3 -c "
+          import json
+          for i, wave in enumerate(json.load(open('/tmp/waves.json'))):
+              print(f'- wave {i}:')
+              for chunk in wave:
+                  print('  - {}: {}'.format(chunk['label'], chunk['ports']))
+          " >> $GITHUB_STEP_SUMMARY
+        env:
+          subportlist: ${{ steps.subportlist.outputs.subportlist }}
+
+  wave0:
+    name: ${{ fromJSON(needs.setup.outputs.wave_names)[0] || format('wave {0}', 0) }}
+    needs: setup
+    if: ${{ fromJSON(needs.setup.outputs.num_waves) > 0 }}
+    uses: ./.github/workflows/wave.yml
+    with:
+      wave-index: 0
+      waves: ${{ needs.setup.outputs.waves }}
+      # Trial: build on a single OS to limit concurrent-runner pressure.
+      # Remove the `oses` override to restore the full three-OS matrix.
+      oses: '["macos-15"]'
+
+  wave1:
+    name: ${{ fromJSON(needs.setup.outputs.wave_names)[1] || format('wave {0}', 1) }}
+    needs: [setup, wave0]
+    if: ${{ fromJSON(needs.setup.outputs.num_waves) > 1 }}
+    uses: ./.github/workflows/wave.yml
+    with:
+      wave-index: 1
+      waves: ${{ needs.setup.outputs.waves }}
+      # Trial: build on a single OS to limit concurrent-runner pressure.
+      # Remove the `oses` override to restore the full three-OS matrix.
+      oses: '["macos-15"]'
+
+  wave2:
+    name: ${{ fromJSON(needs.setup.outputs.wave_names)[2] || format('wave {0}', 2) }}
+    needs: [setup, wave1]
+    if: ${{ fromJSON(needs.setup.outputs.num_waves) > 2 }}
+    uses: ./.github/workflows/wave.yml
+    with:
+      wave-index: 2
+      waves: ${{ needs.setup.outputs.waves }}
+      # Trial: build on a single OS to limit concurrent-runner pressure.
+      # Remove the `oses` override to restore the full three-OS matrix.
+      oses: '["macos-15"]'
+
+  wave3:
+    name: ${{ fromJSON(needs.setup.outputs.wave_names)[3] || format('wave {0}', 3) }}
+    needs: [setup, wave2]
+    if: ${{ fromJSON(needs.setup.outputs.num_waves) > 3 }}
+    uses: ./.github/workflows/wave.yml
+    with:
+      wave-index: 3
+      waves: ${{ needs.setup.outputs.waves }}
+      # Trial: build on a single OS to limit concurrent-runner pressure.
+      # Remove the `oses` override to restore the full three-OS matrix.
+      oses: '["macos-15"]'
+
+  wave4:
+    name: ${{ fromJSON(needs.setup.outputs.wave_names)[4] || format('wave {0}', 4) }}
+    needs: [setup, wave3]
+    if: ${{ fromJSON(needs.setup.outputs.num_waves) > 4 }}
+    uses: ./.github/workflows/wave.yml
+    with:
+      wave-index: 4
+      waves: ${{ needs.setup.outputs.waves }}
+      # Trial: build on a single OS to limit concurrent-runner pressure.
+      # Remove the `oses` override to restore the full three-OS matrix.
+      oses: '["macos-15"]'
+
+  wave5:
+    name: ${{ fromJSON(needs.setup.outputs.wave_names)[5] || format('wave {0}', 5) }}
+    needs: [setup, wave4]
+    if: ${{ fromJSON(needs.setup.outputs.num_waves) > 5 }}
+    uses: ./.github/workflows/wave.yml
+    with:
+      wave-index: 5
+      waves: ${{ needs.setup.outputs.waves }}
+      # Trial: build on a single OS to limit concurrent-runner pressure.
+      # Remove the `oses` override to restore the full three-OS matrix.
+      oses: '["macos-15"]'
+
+  wave6:
+    name: ${{ fromJSON(needs.setup.outputs.wave_names)[6] || format('wave {0}', 6) }}
+    needs: [setup, wave5]
+    if: ${{ fromJSON(needs.setup.outputs.num_waves) > 6 }}
+    uses: ./.github/workflows/wave.yml
+    with:
+      wave-index: 6
+      waves: ${{ needs.setup.outputs.waves }}
+      # Trial: build on a single OS to limit concurrent-runner pressure.
+      # Remove the `oses` override to restore the full three-OS matrix.
+      oses: '["macos-15"]'
+
+  wave7:
+    name: ${{ fromJSON(needs.setup.outputs.wave_names)[7] || format('wave {0}', 7) }}
+    needs: [setup, wave6]
+    if: ${{ fromJSON(needs.setup.outputs.num_waves) > 7 }}
+    uses: ./.github/workflows/wave.yml
+    with:
+      wave-index: 7
+      waves: ${{ needs.setup.outputs.waves }}
+      # Trial: build on a single OS to limit concurrent-runner pressure.
+      # Remove the `oses` override to restore the full three-OS matrix.
+      oses: '["macos-15"]'
+
+  wave8:
+    name: ${{ fromJSON(needs.setup.outputs.wave_names)[8] || format('wave {0}', 8) }}
+    needs: [setup, wave7]
+    if: ${{ fromJSON(needs.setup.outputs.num_waves) > 8 }}
+    uses: ./.github/workflows/wave.yml
+    with:
+      wave-index: 8
+      waves: ${{ needs.setup.outputs.waves }}
+      # Trial: build on a single OS to limit concurrent-runner pressure.
+      # Remove the `oses` override to restore the full three-OS matrix.
+      oses: '["macos-15"]'
+
+  wave9:
+    name: ${{ fromJSON(needs.setup.outputs.wave_names)[9] || format('wave {0}', 9) }}
+    needs: [setup, wave8]
+    if: ${{ fromJSON(needs.setup.outputs.num_waves) > 9 }}
+    uses: ./.github/workflows/wave.yml
+    with:
+      wave-index: 9
+      waves: ${{ needs.setup.outputs.waves }}
+      # Trial: build on a single OS to limit concurrent-runner pressure.
+      # Remove the `oses` override to restore the full three-OS matrix.
+      oses: '["macos-15"]'
+
+  wave10:
+    name: ${{ fromJSON(needs.setup.outputs.wave_names)[10] || format('wave {0}', 10) }}
+    needs: [setup, wave9]
+    if: ${{ fromJSON(needs.setup.outputs.num_waves) > 10 }}
+    uses: ./.github/workflows/wave.yml
+    with:
+      wave-index: 10
+      waves: ${{ needs.setup.outputs.waves }}
+      # Trial: build on a single OS to limit concurrent-runner pressure.
+      # Remove the `oses` override to restore the full three-OS matrix.
+      oses: '["macos-15"]'
+
+  wave11:
+    name: ${{ fromJSON(needs.setup.outputs.wave_names)[11] || format('wave {0}', 11) }}
+    needs: [setup, wave10]
+    if: ${{ fromJSON(needs.setup.outputs.num_waves) > 11 }}
+    uses: ./.github/workflows/wave.yml
+    with:
+      wave-index: 11
+      waves: ${{ needs.setup.outputs.waves }}
+      # Trial: build on a single OS to limit concurrent-runner pressure.
+      # Remove the `oses` override to restore the full three-OS matrix.
+      oses: '["macos-15"]'
