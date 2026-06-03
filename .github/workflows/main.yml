@@ -9,6 +9,8 @@ on:
   push:
     branches-ignore:
       - master
+      # wave-ci/** branches are built by wave-build.yml instead
+      - 'wave-ci/**'
 
 permissions:
   contents: read

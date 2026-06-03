@@ -1,0 +1,315 @@
+# Reusable workflow: build one dependency wave of changed subports.
+#
+# Called by wave-build.yml once per wave, chained with `needs:` so that wave N
+# only starts after wave N-1 finished. A wave consists of chunks of subports
+# (see compute-waves.py); every (os, chunk) pair is its own job with its own
+# 6-hour budget, and builds its subports sequentially like main.yml does.
+#
+# Cross-wave dependency handling: each job downloads the archives built by all
+# earlier waves (for its own OS) and drops them into MacPorts'
+# ${portdbpath}/incoming/verified/ directory. `find_portarchive_path` checks
+# that location for not-yet-registered ports, so install-dependencies resolves
+# a changed dependency to the PR-built binary instead of fetching the published
+# master archive. When no archive is available (e.g. a dependency that landed
+# in the same, collapsed, last wave but in another chunk), install-dependencies
+# falls back to building the dependency from source: slower, still correct.
+#
+# Each staged archive is accompanied by a <subport>.built marker. Before
+# building, a job checks the markers for the subport's changed dependencies
+# from earlier waves (chunk.deps, see compute-waves.py): a missing marker
+# means the dependency failed, so the subport is reported as skipped instead
+# of wasting up to six hours rebuilding a dependency that will fail again.
+name: "build wave"
+
+on:
+  workflow_call:
+    inputs:
+      wave-index:
+        description: "Index of the wave to build"
+        type: number
+        required: true
+      waves:
+        description: "JSON array of waves, each an array of {label, ports} chunks"
+        type: string
+        required: true
+      oses:
+        description: "JSON array of runner labels to build on"
+        type: string
+        required: false
+        default: '["macos-14", "macos-15", "macos-26"]'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.os }} ${{ matrix.chunk.label }} (${{ matrix.chunk.ports }})
+    # 6 hours is the hard limit for jobs on GitHub-hosted runners anyway; one
+    # job now builds a single chunk, which should fit comfortably.
+    timeout-minutes: 360
+    concurrency:
+      cancel-in-progress: true
+      group: ${{ github.ref }}/wave${{ inputs.wave-index }}/${{ matrix.os }}/${{ matrix.chunk.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.oses) }}
+        chunk: ${{ fromJSON(inputs.waves)[inputs.wave-index] }}
+
+    steps:
+      - name: Checkout ports
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 64
+          path: ports
+          show-progress: false
+      - name: Checkout mpbb
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          repository: macports/mpbb
+          path: mpbb
+          show-progress: false
+      - name: Set checkout permissions
+        run: |
+            chmod -R a+rX ./ports
+            CUR_DIR="$(dirname "$(realpath ./ports)")"
+            while [ -n "$CUR_DIR" -a "$CUR_DIR" != "/" ]; do
+                sudo chmod a+rx "$CUR_DIR"
+                CUR_DIR="$(dirname "$CUR_DIR")"
+            done
+      - name: Bootstrap MacPorts
+        env:
+            MP_CI_RELEASE: ${{ vars.MP_CI_RELEASE }}
+        run: . ports/.github/workflows/bootstrap.sh mpbb
+      - name: Set PATH
+        run: |
+          echo "/opt/mports/bin" >> $GITHUB_PATH
+          echo "${PWD}/mpbb" >> $GITHUB_PATH
+          echo "/opt/local/bin" >> $GITHUB_PATH
+          echo "/opt/local/sbin" >> $GITHUB_PATH
+
+      - name: Download archives from earlier waves
+        if: ${{ inputs.wave-index > 0 }}
+        uses: actions/download-artifact@v8
+        with:
+          pattern: pr-archive-${{ matrix.os }}-*
+          path: /tmp/pr-archives
+          merge-multiple: true
+      - name: Make PR-built archives available to MacPorts
+        if: ${{ inputs.wave-index > 0 }}
+        run: |
+          set -eu
+          # ${portdbpath}/incoming/verified is where MacPorts puts archives it
+          # has fetched and signature-verified but not yet installed;
+          # find_portarchive_path checks it for unregistered ports, so
+          # anything placed here is used in preference to remote archives and
+          # source builds. portdbpath is set in .github/workflows/macports.conf.
+          verified=/opt/local/var/macports/incoming/verified
+          if compgen -G '/tmp/pr-archives/*.tbz2' > /dev/null; then
+            sudo mkdir -p "$verified"
+            for f in /tmp/pr-archives/*.tbz2; do
+              echo "Restoring PR-built archive: ${f##*/}"
+              sudo cp "$f" "$verified/"
+            done
+          else
+            echo "No archives from earlier waves for ${{ matrix.os }}"
+          fi
+
+      - name: Build subports
+        run: |
+          set -eu
+
+          echo "#### Build Results (${{ matrix.os }} ${{ matrix.chunk.label }})" >> $GITHUB_STEP_SUMMARY
+
+          fail=0
+          for subport in $ports; do
+            workdir="/tmp/mpbb/$subport"
+            mkdir -p "$workdir/logs"
+            echo "##### ${subport}" >> $GITHUB_STEP_SUMMARY
+            touch "$workdir/logs/dependencies-progress.txt"
+
+            # Changed dependencies from earlier waves must have produced an
+            # archive (signalled by a .built marker); if one failed, building
+            # this subport can only fail too, so skip it with a clear notice.
+            missing_deps=""
+            for dep in $(jq -r --arg p "$subport" '.[$p] // ""' <<< "$deps_json"); do
+              if [ ! -f "/tmp/pr-archives/${dep}.built" ]; then
+                missing_deps="$missing_deps $dep"
+              fi
+            done
+            if [ -n "$missing_deps" ]; then
+              echo "::error::Skipping ${subport}: changed dependencies failed in an earlier wave:${missing_deps}"
+              echo "⛔ Skipped: failed dependencies:${missing_deps}" >> $GITHUB_STEP_SUMMARY
+              fail=1
+              continue
+            fi
+
+            echo "::group::Cleaning up between ports"
+            sudo mpbb --work-dir "$workdir" cleanup
+            echo "::endgroup::"
+
+            echo "::group::Installing dependencies for ${subport}"
+            sudo mpbb \
+              --work-dir "$workdir" \
+              install-dependencies \
+              "$subport" >"$workdir/logs/install-dependencies.log" 2>&1 &
+            deps_pid=$!
+
+            tail -f "$workdir/logs/dependencies-progress.txt" 2>/dev/null &
+            tail_pid=$!
+
+            set +e
+            wait "$deps_pid"
+            deps_exit=$?
+            set -e
+
+            kill "$tail_pid" || true
+
+            if [ "$deps_exit" -ne 0 ]; then
+              echo "::endgroup::"
+              echo "::error::Failed to install dependencies for ${subport}"
+
+              echo "⚠️ Failed to install dependencies" >> $GITHUB_STEP_SUMMARY
+
+              fail=1
+              continue
+            fi
+            echo "::endgroup::"
+
+            echo "::group::Installing ${subport}"
+
+            set +e
+            sudo mpbb \
+              --work-dir "$workdir" \
+              install-port \
+              --source \
+              "$subport"
+            install_exit=$?
+            set -e
+
+            if [ "$install_exit" -ne 0 ]; then
+              echo "::endgroup::"
+              echo "::error::Failed to install ${subport}"
+
+              echo "❌ Failed to install, see the log for more details" >> $GITHUB_STEP_SUMMARY
+
+              lognum=0
+              for logfile in $(find $(port work "${subport}") -name config.log \
+                -or -name CMakeError.log -or -name meson-log.txt); do
+                    mkdir -p "$workdir/logs/$lognum"
+                    echo "$logfile" > "$workdir/logs/$lognum/path.txt"
+                    cp -c "$logfile" "$workdir/logs/$lognum/"
+                    lognum=$(( $lognum + 1))
+              done
+
+              fail=1
+              continue
+            fi
+
+            echo "✅ Successfully built" >> $GITHUB_STEP_SUMMARY
+            echo "::endgroup::"
+
+            echo "::group::Staging archive of ${subport} for later waves"
+            # After install-port the port is registered, so its image lives at
+            # ${portdbpath}/software/<subport>/. Activation extracts the
+            # archive into a directory of the same name (minus .tbz2), so
+            # recreate the archive from it in that case, like mpbb
+            # gather-archives does.
+            imagepath=$(port-tclsh mpbb/tools/archive-path.tcl "$subport")
+            imagedir=${imagepath%.*}
+            mkdir -p /tmp/pr-archive-staging
+            if [ -f "$imagepath" ]; then
+              sudo cp "$imagepath" /tmp/pr-archive-staging/
+              touch "/tmp/pr-archive-staging/${subport}.built"
+            elif [ -d "$imagedir" ]; then
+              sudo tar -cjf "/tmp/pr-archive-staging/$(basename "$imagepath")" -C "$imagedir" .
+              touch "/tmp/pr-archive-staging/${subport}.built"
+            else
+              echo "::warning::No image found for ${subport} at ${imagepath}"
+            fi
+            echo "::endgroup::"
+
+            echo "::group::Testing ${subport}"
+
+            test_fail=0
+            set +e
+            sudo mpbb \
+              --work-dir "$workdir" \
+              test-port \
+              --builtin-only \
+              "$subport"
+            test_exit=$?
+            set -e
+
+            if [ "$test_exit" -ne 0 ]; then
+              echo "::endgroup::"
+              echo "::error::Tests failed for ${subport}"
+
+              echo "❌ Tests failed, see the log for more details" >> $GITHUB_STEP_SUMMARY
+
+              # Not setting fail=1 as a 100% passing test suite is not considered
+              # essential to merge a PR.
+              test_fail=1
+            fi
+
+            test_msgs=$(port log --phase test --level warn "$subport")
+
+            if [ -n "$test_msgs" ]; then
+              echo "$test_msgs"
+              echo "⚠️ Test warnings" >> $GITHUB_STEP_SUMMARY
+
+              printf '```\n%s\n```\n' "$test_msgs" >> $GITHUB_STEP_SUMMARY
+
+              path=$(port file "$subport")
+              # See https://github.com/actions/toolkit/issues/193#issuecomment-605394935
+              encoded_messages="port test ${subport}:%0A"
+              encoded_messages+="$(echo "${test_msgs}" | sed -E 's/$/%0A/g' | tr -d '\n')"
+              echo "::warning file=${path#${PWD}/ports/},line=1,col=1::${encoded_messages}"
+            elif [ $test_fail -eq 0 ]; then
+                 echo "✅ Successfully tested" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            echo "::endgroup::"
+
+          done
+
+          if [ -d /tmp/pr-archive-staging ]; then
+            sudo chmod -R a+rX /tmp/pr-archive-staging
+          fi
+
+          exit "$fail"
+        env:
+          ports: ${{ matrix.chunk.ports }}
+          deps_json: ${{ toJSON(matrix.chunk.deps) }}
+
+      - name: Upload archives for later waves
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: pr-archive-${{ matrix.os }}-${{ matrix.chunk.label }}
+          path: |
+            /tmp/pr-archive-staging/*.tbz2
+            /tmp/pr-archive-staging/*.built
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: ignore
+
+      - name: Make logfiles readable
+        if: always()
+        run: |
+          mkdir -p /tmp/mpbb
+          sudo find \
+            /tmp/mpbb \
+            -maxdepth 1 \
+            -mindepth 1 \
+            -type d \
+            -print \
+            -exec chmod -R go+rX {} \;
+      - name: Archive build logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: logs-wave${{ inputs.wave-index }}-${{ matrix.os }}-${{ matrix.chunk.label }}
+          path: /tmp/mpbb/*/logs
