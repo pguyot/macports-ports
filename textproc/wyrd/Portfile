@@ -4,6 +4,7 @@ PortSystem          1.0
 
 name                wyrd
 version             1.4.6
+revision            1
 checksums           rmd160  47319812942195d4b56f861b7cbb527e94e7495f \
                     sha256  b2b51d6fb38f8b8b3ec30ee72093f791ba9b6fe35418191bc2011d2c8079997e \
                     size    425829
