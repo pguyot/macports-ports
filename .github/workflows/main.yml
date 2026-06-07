@@ -9,6 +9,8 @@ on:
   push:
     branches-ignore:
       - master
+      # graph-ci/** branches are built by graph-build.yml instead
+      - 'graph-ci/**'
 
 permissions:
   contents: read

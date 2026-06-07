@@ -1,0 +1,224 @@
+# Prototype: build changed subports as a single flat matrix (one job per
+# subport), with dependency ordering enforced at run time through artifacts
+# instead of through a static graph of chained jobs.
+#
+# This is the "graph" alternative to wave-build.yml. It keeps jmroot's
+# dynamic-matrix shape -- `setup` computes the changed subports and feeds them
+# to matrixed build jobs (one job per subport, split into batches of <=250 to
+# stay under GitHub's 256-jobs-per-matrix cap; see graph-job.yml) -- but
+# removes the wave design's two static limits:
+#   * no maximum dependency depth (the wave design hard-codes 12 chained
+#     jobs and collapses anything deeper into the last wave);
+#   * no per-wave barrier: a subport starts as soon as *its own* changed
+#     dependencies are built, not when every port in the previous wave is.
+#
+# How ordering works without `needs:` between build jobs (see compute-graph.py
+# for the per-subport `waits` list of transitive changed dependencies):
+#   1. Each build job, before building, polls this run's artifacts for a
+#      `pr-archive-<os>-<dep>-built` or `-failed` marker for every dependency
+#      in `waits` (the "Wait for dependencies" step -- a step-level retry
+#      loop). GitHub publishes an artifact to other *running* jobs as soon as
+#      its upload step finishes, so a one-job-per-port granularity makes each
+#      port visible the moment it is built.
+#   2. All dependencies built -> the job restores their archives into
+#      ${portdbpath}/incoming/verified/ (so the changed deps resolve to the
+#      PR-built binaries) and builds.
+#   3. Any dependency `-failed` -> the job skips with a notice and publishes
+#      its own `-failed` marker, so the failure propagates to *its* dependents
+#      instead of each of them rediscovering it by a long, doomed build.
+#   4. Timed out waiting (a dependency's own job is still queued or stuck) ->
+#      the job fails without a marker; "Re-run failed jobs" then retries it
+#      with a fresh 6-hour budget, by which point the dependency's archive is
+#      published and the build proceeds. This is the escape hatch for the one
+#      case the flat design cannot beat the wave design on: a single deep
+#      critical path (e.g. llvm-22 -> clang-22 -> flang-22) whose total time
+#      approaches the 6-hour per-job limit, because here a dependent's wait
+#      counts against its own budget whereas a wave grants a fresh budget once
+#      the previous wave ends.
+#
+# While prototyping this runs only on graph-ci/** branches; to adopt it for
+# PRs, move main.yml's triggers here and retire the build job there.
+name: "lint & build changed ports (flat graph)"
+
+on:
+  push:
+    branches:
+      - 'graph-ci/**'
+
+permissions:
+  contents: read
+  # The build jobs poll and download this run's artifacts via the REST API to
+  # discover and fetch dependencies built by sibling jobs.
+  actions: read
+
+jobs:
+  setup:
+    name: compute graph
+    runs-on: macos-15
+    outputs:
+      count: ${{ steps.graph.outputs.count }}
+      batches: ${{ steps.graph.outputs.batches }}
+      num_batches: ${{ steps.graph.outputs.num_batches }}
+    steps:
+      - name: Checkout ports
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 64
+          path: ports
+          show-progress: false
+      - name: Checkout mpbb
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          repository: macports/mpbb
+          path: mpbb
+          show-progress: false
+      - name: Set checkout permissions
+        run: |
+            chmod -R a+rX ./ports
+            CUR_DIR="$(dirname "$(realpath ./ports)")"
+            while [ -n "$CUR_DIR" -a "$CUR_DIR" != "/" ]; do
+                sudo chmod a+rx "$CUR_DIR"
+                CUR_DIR="$(dirname "$CUR_DIR")"
+            done
+      - name: Bootstrap MacPorts
+        env:
+            MP_CI_RELEASE: ${{ vars.MP_CI_RELEASE }}
+        run: . ports/.github/workflows/bootstrap.sh mpbb
+      - name: Determine list of changed ports
+        id: portlist
+        run: |
+          set -eu
+          echo "/opt/mports/bin" >> $GITHUB_PATH
+          echo "${PWD}/mpbb" >> $GITHUB_PATH
+          echo "/opt/local/bin" >> $GITHUB_PATH
+          echo "/opt/local/sbin" >> $GITHUB_PATH
+
+          portlist=$( \
+            git -C ports/ diff --name-only --diff-filter=AM macports/master...@ \
+              | grep -E '^[^._/][^/]*/[^/]+/(Portfile$|files/)' \
+              | cut -d/ -f2 \
+              | sort -u \
+              | tr '\n' ' ' \
+              | sed 's/ $//')
+
+          echo "$portlist"
+          echo "portlist=$portlist" >> $GITHUB_OUTPUT
+
+      - name: Determine list of subports from portlist
+        id: subportlist
+        run: |
+          set -eu
+
+          echo "#### Changed Ports" >> $GITHUB_STEP_SUMMARY
+
+          subportlist=""
+          echo "::group::Listing subports"
+          new_subports=$(mpbb \
+              --work-dir /tmp/mpbb \
+              list-subports \
+              --archive-site= \
+              --archive-site-private= \
+              --include-deps=no \
+              $portlist \
+              | tr '\n' ' ')
+          for subport in $new_subports; do
+            echo "$subport"
+            echo "- ${subport}" >> $GITHUB_STEP_SUMMARY
+            subportlist="$subportlist $subport"
+          done
+          echo "::endgroup::"
+
+          echo "subportlist=${subportlist}" >> $GITHUB_OUTPUT
+        env:
+          portlist: ${{ steps.portlist.outputs.portlist }}
+      - name: Run port lint for all changed subports
+        continue-on-error: true
+        run: |
+          set -eu
+
+          echo "#### Lint Results" >> $GITHUB_STEP_SUMMARY
+
+          fail=0
+          for subport in $subportlist; do
+            echo "::group::${subport}"
+            path=$(port file "$subport")
+            messagetype="warning"
+            if ! messages=$(port -q lint "$subport" 2>&1); then
+              messagetype="error"
+              fail=1
+            fi
+
+            if [ -n "$messages" ]; then
+              echo "$messages"
+
+              if [ "$fail" -eq 1 ]; then
+                echo "##### ❌ ${subport}" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "##### ⚠️ ${subport}" >> $GITHUB_STEP_SUMMARY
+              fi
+              printf '```\n%s\n```\n' "$messages" >> $GITHUB_STEP_SUMMARY
+
+              encoded_messages="port lint ${subport}:%0A"
+              encoded_messages+="$(echo "${messages}" | sed -E 's/$/%0A/g' | tr -d '\n')"
+              echo "::${messagetype} file=${path#${PWD}/ports/},line=1,col=1::${encoded_messages}"
+            else
+                echo "##### ✅ ${subport}" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "::endgroup::"
+          done
+
+          exit "$fail"
+        env:
+          subportlist: ${{ steps.subportlist.outputs.subportlist }}
+      - name: Compute dependency graph
+        id: graph
+        run: |
+          set -eu
+          # compute-graph.py writes the `count`, `batches` and `num_batches`
+          # step outputs to $GITHUB_OUTPUT itself, and prints the flat entry
+          # list (one per subport, topological order, each annotated with its
+          # transitive changed dependencies) to stdout for the summary below.
+          ./ports/.github/workflows/compute-graph.py $subportlist > /tmp/graph.json
+
+          echo "#### Build Graph" >> $GITHUB_STEP_SUMMARY
+          python3 -c "
+          import json
+          for e in json.load(open('/tmp/graph.json')):
+              waits = e['waits'] or '(none)'
+              print('- {} ⟵ {}'.format(e['port'], waits))
+          " >> $GITHUB_STEP_SUMMARY
+        env:
+          subportlist: ${{ steps.subportlist.outputs.subportlist }}
+
+  # One matrixed build job per batch. All batches depend only on `setup` and
+  # run in parallel; cross-batch dependency ordering is handled at run time by
+  # the artifact wait in graph-job.yml, not by `needs:`. Four batches of up to
+  # 250 subports cover 1000 changed subports; add build4+ to go higher.
+  build0:
+    needs: setup
+    if: ${{ fromJSON(needs.setup.outputs.num_batches) > 0 }}
+    uses: ./.github/workflows/graph-job.yml
+    with:
+      batch: ${{ toJSON(fromJSON(needs.setup.outputs.batches)[0]) }}
+
+  build1:
+    needs: setup
+    if: ${{ fromJSON(needs.setup.outputs.num_batches) > 1 }}
+    uses: ./.github/workflows/graph-job.yml
+    with:
+      batch: ${{ toJSON(fromJSON(needs.setup.outputs.batches)[1]) }}
+
+  build2:
+    needs: setup
+    if: ${{ fromJSON(needs.setup.outputs.num_batches) > 2 }}
+    uses: ./.github/workflows/graph-job.yml
+    with:
+      batch: ${{ toJSON(fromJSON(needs.setup.outputs.batches)[2]) }}
+
+  build3:
+    needs: setup
+    if: ${{ fromJSON(needs.setup.outputs.num_batches) > 3 }}
+    uses: ./.github/workflows/graph-job.yml
+    with:
+      batch: ${{ toJSON(fromJSON(needs.setup.outputs.batches)[3]) }}

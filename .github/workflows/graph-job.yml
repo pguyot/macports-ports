@@ -1,0 +1,364 @@
+# Reusable workflow: build one batch of changed subports as a flat matrix,
+# one job per subport, with dependency ordering enforced at run time through
+# artifacts (see graph-build.yml for the design and compute-graph.py for the
+# per-subport `waits` list of transitive changed dependencies).
+#
+# graph-build.yml calls this once per batch. Batches exist only to keep each
+# job's matrix under GitHub's hard cap of 256 configurations; every batch job
+# depends solely on `setup`, never on another batch, so batching adds no
+# dependency-depth limit -- the artifact-based ordering spans all batches.
+name: "build graph batch"
+
+on:
+  workflow_call:
+    inputs:
+      batch:
+        description: "JSON array of {port, waits} entries to build"
+        type: string
+        required: true
+      oses:
+        description: "JSON array of runner labels to build on"
+        type: string
+        required: false
+        default: '["macos-15"]'
+
+permissions:
+  contents: read
+  # Build jobs poll and download this run's artifacts via the REST API to
+  # discover and fetch dependencies built by sibling jobs (in any batch).
+  actions: read
+
+jobs:
+  build:
+    name: ${{ matrix.os }} ${{ matrix.entry.port }}
+    strategy:
+      fail-fast: false
+      # Topological order (compute-graph.py) plus GitHub's roughly FIFO
+      # scheduling fills the graph bottom-up under the macOS runner cap.
+      max-parallel: 5
+      matrix:
+        os: ${{ fromJSON(inputs.oses) }}
+        entry: ${{ fromJSON(inputs.batch) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    concurrency:
+      cancel-in-progress: true
+      group: ${{ github.ref }}/graph/${{ matrix.os }}/${{ matrix.entry.port }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.run_id }}
+      OS: ${{ matrix.os }}
+      PORT: ${{ matrix.entry.port }}
+      WAITS: ${{ matrix.entry.waits }}
+      # How long a job waits for a dependency's marker before failing so that
+      # "Re-run failed jobs" can retry it with a fresh budget. Kept below the
+      # 360 min job limit to leave room for the build that follows the wait.
+      WAIT_TIMEOUT_MIN: "300"
+    steps:
+      - name: Checkout ports
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 64
+          path: ports
+          show-progress: false
+      - name: Checkout mpbb
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          repository: macports/mpbb
+          path: mpbb
+          show-progress: false
+      - name: Set checkout permissions
+        run: |
+            chmod -R a+rX ./ports
+            CUR_DIR="$(dirname "$(realpath ./ports)")"
+            while [ -n "$CUR_DIR" -a "$CUR_DIR" != "/" ]; do
+                sudo chmod a+rx "$CUR_DIR"
+                CUR_DIR="$(dirname "$CUR_DIR")"
+            done
+      - name: Bootstrap MacPorts
+        env:
+            MP_CI_RELEASE: ${{ vars.MP_CI_RELEASE }}
+        run: . ports/.github/workflows/bootstrap.sh mpbb
+      - name: Set PATH
+        run: |
+          echo "/opt/mports/bin" >> $GITHUB_PATH
+          echo "${PWD}/mpbb" >> $GITHUB_PATH
+          echo "/opt/local/bin" >> $GITHUB_PATH
+          echo "/opt/local/sbin" >> $GITHUB_PATH
+
+      - name: Wait for dependencies
+        id: wait
+        # Step-level retry: poll this run's artifacts until every changed
+        # dependency in $WAITS has published a -built or -failed marker. The
+        # artifact name encodes the outcome, so polling never has to download.
+        run: |
+          set -eu
+          if [ -z "${WAITS// /}" ]; then
+            echo "No changed dependencies to wait for."
+            echo "failed_deps=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          deadline=$(( $(date +%s) + WAIT_TIMEOUT_MIN * 60 ))
+          while :; do
+            names=$(gh api --paginate \
+              "repos/$REPO/actions/runs/$RUN_ID/artifacts" \
+              -q '.artifacts[].name' 2>/dev/null || true)
+
+            pending=""
+            failed=""
+            for dep in $WAITS; do
+              if printf '%s\n' "$names" | grep -qxF "pr-archive-$OS-$dep-built"; then
+                :
+              elif printf '%s\n' "$names" | grep -qxF "pr-archive-$OS-$dep-failed"; then
+                failed="$failed $dep"
+              else
+                pending="$pending $dep"
+              fi
+            done
+
+            if [ -z "$pending" ]; then
+              break
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::Timed out waiting for dependencies of ${PORT}:${pending}"
+              echo "Re-run this job once those dependencies have been built."
+              exit 75
+            fi
+            echo "Waiting on:${pending}${failed:+ (already failed:${failed})}"
+            sleep 60
+          done
+
+          echo "Dependencies resolved (failed:${failed:-none})"
+          echo "failed_deps=${failed# }" >> $GITHUB_OUTPUT
+
+      - name: Skip on failed dependencies
+        if: ${{ steps.wait.outputs.failed_deps != '' }}
+        run: |
+          set -eu
+          echo "::error::Skipping ${PORT}: changed dependencies failed:${{ steps.wait.outputs.failed_deps }}"
+          echo "#### ${PORT}" >> $GITHUB_STEP_SUMMARY
+          echo "⛔ Skipped: failed dependencies: ${{ steps.wait.outputs.failed_deps }}" >> $GITHUB_STEP_SUMMARY
+          # Publish a failed marker so this port's own dependents skip too,
+          # rather than each waiting out the timeout on a port that will never
+          # build.
+          mkdir -p /tmp/marker
+          touch "/tmp/marker/${PORT}.failed"
+
+      - name: Publish failed marker
+        if: ${{ steps.wait.outputs.failed_deps != '' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: pr-archive-${{ matrix.os }}-${{ matrix.entry.port }}-failed
+          path: /tmp/marker/${{ matrix.entry.port }}.failed
+          retention-days: 3
+          overwrite: true
+          if-no-files-found: warn
+
+      - name: Fail the skipped job
+        if: ${{ steps.wait.outputs.failed_deps != '' }}
+        run: exit 1
+
+      - name: Download built dependencies
+        if: ${{ steps.wait.outputs.failed_deps == '' && env.WAITS != '' }}
+        uses: actions/download-artifact@v8
+        with:
+          pattern: pr-archive-${{ matrix.os }}-*-built
+          path: /tmp/pr-archives
+          merge-multiple: true
+      - name: Restore PR-built dependency archives
+        if: ${{ steps.wait.outputs.failed_deps == '' && env.WAITS != '' }}
+        run: |
+          set -eu
+          # Place the PR-built archives of this port's transitive changed
+          # dependencies where find_portarchive_path looks for not-yet-
+          # registered ports, so install-dependencies resolves them to the
+          # PR binaries instead of the published master archives.
+          verified=/opt/local/var/macports/incoming/verified
+          sudo mkdir -p "$verified"
+          for dep in $WAITS; do
+            f="/tmp/pr-archives/${dep}.tbz2"
+            if [ -f "$f" ]; then
+              echo "Restoring PR-built archive: ${dep}.tbz2"
+              sudo cp "$f" "$verified/"
+            else
+              echo "::warning::No archive for dependency ${dep}; it will be built from source"
+            fi
+          done
+
+      - name: Build subport
+        if: ${{ steps.wait.outputs.failed_deps == '' }}
+        id: build
+        run: |
+          set -eu
+
+          subport="$PORT"
+          workdir="/tmp/mpbb/$subport"
+          mkdir -p "$workdir/logs"
+          echo "#### ${subport}" >> $GITHUB_STEP_SUMMARY
+          touch "$workdir/logs/dependencies-progress.txt"
+
+          echo "::group::Cleaning up before build"
+          sudo mpbb --work-dir "$workdir" cleanup
+          echo "::endgroup::"
+
+          echo "::group::Installing dependencies for ${subport}"
+          sudo mpbb \
+            --work-dir "$workdir" \
+            install-dependencies \
+            "$subport" >"$workdir/logs/install-dependencies.log" 2>&1 &
+          deps_pid=$!
+
+          tail -f "$workdir/logs/dependencies-progress.txt" 2>/dev/null &
+          tail_pid=$!
+
+          set +e
+          wait "$deps_pid"
+          deps_exit=$?
+          set -e
+
+          kill "$tail_pid" || true
+
+          if [ "$deps_exit" -ne 0 ]; then
+            echo "::endgroup::"
+            echo "::error::Failed to install dependencies for ${subport}"
+            echo "⚠️ Failed to install dependencies" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Installing ${subport}"
+          set +e
+          sudo mpbb \
+            --work-dir "$workdir" \
+            install-port \
+            --source \
+            "$subport"
+          install_exit=$?
+          set -e
+
+          if [ "$install_exit" -ne 0 ]; then
+            echo "::endgroup::"
+            echo "::error::Failed to install ${subport}"
+            echo "❌ Failed to install, see the log for more details" >> $GITHUB_STEP_SUMMARY
+
+            lognum=0
+            for logfile in $(find $(port work "${subport}") -name config.log \
+              -or -name CMakeError.log -or -name meson-log.txt); do
+                  mkdir -p "$workdir/logs/$lognum"
+                  echo "$logfile" > "$workdir/logs/$lognum/path.txt"
+                  cp -c "$logfile" "$workdir/logs/$lognum/"
+                  lognum=$(( $lognum + 1))
+            done
+            exit 1
+          fi
+
+          echo "✅ Successfully built" >> $GITHUB_STEP_SUMMARY
+          echo "::endgroup::"
+
+          echo "::group::Staging archive of ${subport}"
+          # After install-port the port is registered, so its image lives at
+          # ${portdbpath}/software/<subport>/. Activation extracts the archive
+          # into a directory of the same name (minus .tbz2), so recreate the
+          # archive from it in that case, like mpbb gather-archives does.
+          imagepath=$(port-tclsh mpbb/tools/archive-path.tcl "$subport")
+          imagedir=${imagepath%.*}
+          mkdir -p /tmp/pr-archive-staging
+          if [ -f "$imagepath" ]; then
+            sudo cp "$imagepath" "/tmp/pr-archive-staging/${subport}.tbz2"
+          elif [ -d "$imagedir" ]; then
+            sudo tar -cjf "/tmp/pr-archive-staging/${subport}.tbz2" -C "$imagedir" .
+          else
+            echo "::error::No image found for ${subport} at ${imagepath}"
+            exit 1
+          fi
+          sudo chmod -R a+rX /tmp/pr-archive-staging
+          echo "::endgroup::"
+
+          echo "::group::Testing ${subport}"
+          test_fail=0
+          set +e
+          sudo mpbb \
+            --work-dir "$workdir" \
+            test-port \
+            --builtin-only \
+            "$subport"
+          test_exit=$?
+          set -e
+
+          if [ "$test_exit" -ne 0 ]; then
+            echo "::endgroup::"
+            echo "::error::Tests failed for ${subport}"
+            echo "❌ Tests failed, see the log for more details" >> $GITHUB_STEP_SUMMARY
+            # A failing test suite is not considered essential to merge a PR,
+            # so this does not fail the job.
+            test_fail=1
+          fi
+
+          test_msgs=$(port log --phase test --level warn "$subport")
+          if [ -n "$test_msgs" ]; then
+            echo "$test_msgs"
+            echo "⚠️ Test warnings" >> $GITHUB_STEP_SUMMARY
+            printf '```\n%s\n```\n' "$test_msgs" >> $GITHUB_STEP_SUMMARY
+            path=$(port file "$subport")
+            encoded_messages="port test ${subport}:%0A"
+            encoded_messages+="$(echo "${test_msgs}" | sed -E 's/$/%0A/g' | tr -d '\n')"
+            echo "::warning file=${path#${PWD}/ports/},line=1,col=1::${encoded_messages}"
+          elif [ $test_fail -eq 0 ]; then
+            echo "✅ Successfully tested" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "::endgroup::"
+
+      - name: Publish built archive
+        # The marker for dependents is the artifact's existence; the archive
+        # itself rides along so dependents can restore it. Uploaded as its own
+        # step so it becomes visible to waiting sibling jobs as soon as this
+        # port is built.
+        if: ${{ steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: pr-archive-${{ matrix.os }}-${{ matrix.entry.port }}-built
+          path: /tmp/pr-archive-staging/${{ matrix.entry.port }}.tbz2
+          retention-days: 3
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Publish failed marker (build failure)
+        # A genuine build failure also publishes a -failed marker so dependents
+        # skip instead of waiting out the timeout.
+        if: ${{ steps.wait.outputs.failed_deps == '' && steps.build.outcome == 'failure' }}
+        run: |
+          mkdir -p /tmp/marker
+          touch "/tmp/marker/${PORT}.failed"
+      - name: Upload failed marker (build failure)
+        if: ${{ steps.wait.outputs.failed_deps == '' && steps.build.outcome == 'failure' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: pr-archive-${{ matrix.os }}-${{ matrix.entry.port }}-failed
+          path: /tmp/marker/${{ matrix.entry.port }}.failed
+          retention-days: 3
+          overwrite: true
+          if-no-files-found: warn
+
+      - name: Make logfiles readable
+        if: always()
+        run: |
+          mkdir -p /tmp/mpbb
+          sudo find \
+            /tmp/mpbb \
+            -maxdepth 1 \
+            -mindepth 1 \
+            -type d \
+            -print \
+            -exec chmod -R go+rX {} \;
+      - name: Archive build logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: logs-${{ matrix.os }}-${{ matrix.entry.port }}
+          path: /tmp/mpbb/*/logs
+          if-no-files-found: ignore
+          overwrite: true
