@@ -11,7 +11,9 @@ epoch               1
 version             5.4.1
 revision            0
 set major_vers      [join [lrange [split ${version} .] 0 1] .]
-supported_archs     x86_64 arm64
+# Note that ppc, ppc64 and i386 on Mac are no longer supported by upstream
+# We may have to remove support at some point.
+supported_archs     i386 x86_64 arm64 ppc ppc64
 maintainers         {pmetzger @pmetzger} openmaintainer
 categories          lang ocaml
 license             LGPL
@@ -35,6 +37,25 @@ set docdir          ${prefix}/share/doc/${name}
 
 compiler.blacklist  gcc-4.0 *gcc-4.2 {clang < 400}
 
+# Note: the port maintainer has no access to older versions of MacOS,
+# debug problems with these patches.
+# OCaml 5's configure has no darwin ppc/i386 case, so it falls back to a
+# bytecode-only build (arch=none) on those targets. The old native-ppc and
+# 32-bit-darwin shared-library configure patches no longer apply and are not
+# needed; only the strnlen shim for pre-10.7 libc remains relevant.
+if {${os.major} < 11} {
+    # need to add strnlen patch as not in library
+    patchfiles-append  patch-strnlen-socketaddr.diff
+
+    if {${build_arch} eq "i386" || ${build_arch} eq "x86_64"} {
+    # compiler selection pulls in clang-3.4 on 10.6 and less
+    # and this compiler is needed for this port to run once installed
+    # so force this compiler and require it at runtime
+    compiler.whitelist     macports-clang-3.4
+    depends_run-append     port:clang-3.4
+    }
+}
+
 # see INSTALL.adoc
 configure.cc-append {*}${configure.cc_archflags}
 
@@ -53,7 +74,13 @@ configure.pre_args  --prefix=${prefix} --mandir=${prefix}/share/man
 configure.ldflags-delete    -L${prefix}/lib
 
 # Building.
-build.target    world.opt
+# OCaml 5 has no native compiler (ocamlopt) on 32-bit platforms (i386) nor on
+# ppc/ppc64, so build bytecode-only (world) instead of world.opt there.
+if {${build_arch} in [list i386 ppc ppc64]} {
+    build.target    world
+    } else {
+    build.target    world.opt
+}
 
 post-destroot {
     xinstall -d ${destroot}${docdir}

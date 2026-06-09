@@ -35,7 +35,11 @@ depends_lib-append  port:ocaml-camlp-streams
 
 use_parallel_build  no
 
-build.target        byte native
+if {${build_arch} in [list i386 ppc ppc64]} {
+    build.target    byte
+    } else {
+    build.target    byte native
+}
 
 destroot.target     install install-META
 destroot.destdir    BINDIR=${destroot}${prefix}/bin \

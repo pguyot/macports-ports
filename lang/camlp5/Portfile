@@ -42,7 +42,11 @@ depends_lib         port:ocaml \
 configure.pre_args  --prefix "${prefix}"
 configure.args      --mandir "${prefix}/share/man"
 
-build.target        world.opt
+if {${build_arch} in [list i386 ppc ppc64]} {
+    build.target    world
+    } else {
+    build.target    world.opt
+}
 
 use_parallel_build  no
 
