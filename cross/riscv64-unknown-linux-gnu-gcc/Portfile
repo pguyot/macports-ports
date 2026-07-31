@@ -7,7 +7,8 @@ name                riscv64-unknown-linux-gnu-gcc
 # ── versions ──────────────────────────────────────────────────────────
 set gcc_version     16.1.0
 set musl_version    1.2.6
-set glibc_version   2.43
+set glibc_version   2.44
+set glibc_revision  1
 set uclibc_version  1.0.58
 
 # ── subport declarations ──────────────────────────────────────────────
@@ -21,6 +22,7 @@ subport riscv64-unknown-linux-uclibc-gcc {}
 # ── classify subport ──────────────────────────────────────────────────
 set binutils_target riscv64-unknown-linux-gnu
 set bootstrap_prefix ${prefix}/libexec/riscv64-linux-gcc-bootstrap
+set port_revision   0
 
 if {${subport} eq "riscv64-linux-gcc-bootstrap"} {
     set port_type       bootstrap
@@ -31,6 +33,7 @@ if {${subport} eq "riscv64-linux-gcc-bootstrap"} {
         set target      riscv64-unknown-linux-gnu
         set libc        glibc
         set libc_version ${glibc_version}
+        set port_revision ${glibc_revision}
     } elseif {${subport} eq "riscv64-unknown-linux-musl-libc"} {
         set target      riscv64-unknown-linux-musl
         set libc        musl
@@ -56,7 +59,7 @@ if {${subport} eq "riscv64-linux-gcc-bootstrap"} {
 
 # ── common metadata ───────────────────────────────────────────────────
 version             ${gcc_version}
-revision            0
+revision            ${port_revision}
 categories          cross devel
 license             GPL-3+
 maintainers         {pguyot @pguyot} openmaintainer
@@ -181,9 +184,9 @@ if {${port_type} eq "bootstrap"} {
         dist_subdir     glibc
 
         checksums       glibc-${glibc_version}.tar.xz \
-                            rmd160  1b8a6c2d93f212edf8c6a20395917fa2d77089b6 \
-                            sha256  d9c86c6b5dbddb43a3e08270c5844fc5177d19442cf5b8df4be7c07cd5fa3831 \
-                            size    20297012
+                            rmd160  218d0c284e897b1c0755be26ead329d6af0b116a \
+                            sha256  37f600f2bef3c5e8300147059568b2a2e40a7ad6ccc65ce942556d49429cc667 \
+                            size    20620544
 
         use_xz          yes
         worksrcdir      glibc-${glibc_version}
