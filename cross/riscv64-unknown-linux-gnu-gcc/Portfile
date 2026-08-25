@@ -4,13 +4,13 @@ PortSystem          1.0
 
 name                riscv64-unknown-linux-gnu-gcc
 
-# ── versions ──────────────────────────────────────────────────────────
-set gcc_version     16.1.0
+# -- versions ----------------------------------------------------------
+set gcc_version     16.2.0
 set musl_version    1.2.6
-set glibc_version   2.43
-set uclibc_version  1.0.58
+set glibc_version   2.44
+set uclibc_version  1.0.59
 
-# ── subport declarations ──────────────────────────────────────────────
+# -- subport declarations ----------------------------------------------
 subport riscv64-linux-gcc-bootstrap {}
 subport riscv64-unknown-linux-gnu-libc {}
 subport riscv64-unknown-linux-musl-libc {}
@@ -18,7 +18,7 @@ subport riscv64-unknown-linux-uclibc-libc {}
 subport riscv64-unknown-linux-musl-gcc {}
 subport riscv64-unknown-linux-uclibc-gcc {}
 
-# ── classify subport ──────────────────────────────────────────────────
+# -- classify subport --------------------------------------------------
 set binutils_target riscv64-unknown-linux-gnu
 set bootstrap_prefix ${prefix}/libexec/riscv64-linux-gcc-bootstrap
 
@@ -54,7 +54,7 @@ if {${subport} eq "riscv64-linux-gcc-bootstrap"} {
     }
 }
 
-# ── common metadata ───────────────────────────────────────────────────
+# -- common metadata ---------------------------------------------------
 version             ${gcc_version}
 revision            0
 categories          cross devel
@@ -65,11 +65,11 @@ homepage            https://gcc.gnu.org/
 universal_variant   no
 destroot.violate_mtree yes
 
-# ── GCC source (shared by bootstrap and gcc subports) ─────────────────
+# -- GCC source (shared by bootstrap and gcc subports) -----------------
 set gcc_distfile    gcc-${gcc_version}.tar.xz
-set gcc_checksums   "rmd160  7ee813a1b836be79104104dec125ddd47e7dc819 \
-                     sha256  50efb4d94c3397aff3b0d61a5abd748b4dd31d9d3f2ab7be05b171d36a510f79 \
-                     size    102456900"
+set gcc_checksums   "rmd160  405146366b7c601dccb1da19ed1a337f836a46f9 \
+                     sha256  e6738e29597f733270731aa90600f37ffdc045079dfc27ec7e8192cc81085c3e \
+                     size    107200820"
 
 # ======================================================================
 #  riscv64-linux-gcc-bootstrap
@@ -181,9 +181,9 @@ if {${port_type} eq "bootstrap"} {
         dist_subdir     glibc
 
         checksums       glibc-${glibc_version}.tar.xz \
-                            rmd160  1b8a6c2d93f212edf8c6a20395917fa2d77089b6 \
-                            sha256  d9c86c6b5dbddb43a3e08270c5844fc5177d19442cf5b8df4be7c07cd5fa3831 \
-                            size    20297012
+                            rmd160  218d0c284e897b1c0755be26ead329d6af0b116a \
+                            sha256  37f600f2bef3c5e8300147059568b2a2e40a7ad6ccc65ce942556d49429cc667 \
+                            size    20620544
 
         use_xz          yes
         worksrcdir      glibc-${glibc_version}
@@ -211,17 +211,19 @@ if {${port_type} eq "bootstrap"} {
             Cross-compiled uClibc-ng ${uclibc_version} for ${target}. \
             Installs a sysroot with C library and kernel headers.
 
-        master_sites    https://downloads.uclibc-ng.org/releases/${uclibc_version}/
-        distfiles       uClibc-ng-${uclibc_version}.tar.xz
+        # downloads.uclibc-ng.org is Cloudflare-fronted and unreliable from
+        # CI (intermittent 522/525), so fetch the GitHub tag archive instead,
+        # which is always reachable from GitHub Actions.
+        master_sites    https://github.com/wbx-github/uclibc-ng/archive/refs/tags/
+        distfiles       v${uclibc_version}.tar.gz
         dist_subdir     uclibc-ng
 
-        checksums       uClibc-ng-${uclibc_version}.tar.xz \
-                            rmd160  9cfae9e13b3869597d8b3d0d8cc07d86357e34f2 \
-                            sha256  9e8100a442f7079b9728ca286e3035f67df0578606166ea2d1ef865a4a12ddb9 \
-                            size    1991796
+        checksums       v${uclibc_version}.tar.gz \
+                            rmd160  506ada61f6e337121041d838f1010d8ec6c95415 \
+                            sha256  0e7e29ef1cb1568339f983f6f5aae9cc54562bb3242809e8acc3fab868cce6c0 \
+                            size    3479370
 
-        use_xz          yes
-        worksrcdir      uClibc-ng-${uclibc_version}
+        worksrcdir      uclibc-ng-${uclibc_version}
     }
 
     depends_build   port:riscv64-linux-gcc-bootstrap \
@@ -311,8 +313,12 @@ if {${port_type} eq "bootstrap"} {
                     --disable-nscd \
                     --enable-kernel=5.10 \
                     libc_cv_slibdir=/usr/lib"
+            # glibc's top-level "install" target recurses into multiple
+            # subdirs (e.g. csu, gnu) that race on shared generated headers
+            # such as gnu/lib-names-lp64d.h when run in parallel, so build
+            # this target serially.
             system -W ${workpath}/build-glibc \
-                "env PATH=${libc_path} ${prefix}/bin/gmake -j${njobs} install DESTDIR=${sysroot}"
+                "env PATH=${libc_path} ${prefix}/bin/gmake install DESTDIR=${sysroot}"
 
         } elseif {${libc} eq "uclibc"} {
             # Fix .oS/.os case collision on macOS (same issue as glibc)
@@ -329,6 +335,12 @@ if {${port_type} eq "bootstrap"} {
             puts ${fd} "UCLIBC_HAS_THREADS=y"
             puts ${fd} "UCLIBC_HAS_THREADS_NATIVE=y"
             puts ${fd} "HAS_NO_THREADS=n"
+            # DO_C99_MATH has no Kconfig default, so olddefconfig leaves it
+            # unset; that drops libm/s_signbit.c, but libc's own
+            # _fpmaxtostr.c (built unconditionally under UCLIBC_HAS_FLOATS)
+            # unconditionally calls signbit(), leaving __signbit undefined.
+            puts ${fd} "UCLIBC_HAS_FPU=y"
+            puts ${fd} "DO_C99_MATH=y"
             close ${fd}
             system -W ${worksrcpath} \
                 "env PATH=${libc_path} make ARCH=riscv64 olddefconfig"
@@ -338,9 +350,14 @@ if {${port_type} eq "bootstrap"} {
                 "env PATH=${libc_path} make install DESTDIR=${sysroot}"
 
             # uClibc-ng includes math functions in libc; create libm
-            # symlinks so that -lm works (expected by libstdc++ etc.)
-            file link -symbolic ${sysroot}/usr/lib/libm.a libc.a
-            file link -symbolic ${sysroot}/usr/lib/libm.so libc.so
+            # symlinks so that -lm works (expected by libstdc++ etc.), unless
+            # DO_C99_MATH already made uClibc-ng install its own libm stubs.
+            if {![file exists ${sysroot}/usr/lib/libm.a]} {
+                file link -symbolic ${sysroot}/usr/lib/libm.a libc.a
+            }
+            if {![file exists ${sysroot}/usr/lib/libm.so]} {
+                file link -symbolic ${sysroot}/usr/lib/libm.so libc.so
+            }
         }
     }
 
