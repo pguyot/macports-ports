@@ -1,11 +1,7 @@
 name: "Index & mirror changed ports"
 
 on:
-  push:
-    branches:
-      - master
-    paths-ignore:
-      - '.github/**'
+  workflow_dispatch: {}
 
 permissions:
   contents: read
