@@ -33,6 +33,9 @@ if {${name} ne ${subport}} {
 
     python.pep517       no
 
+    # Force serial compilation to avoid intermittent compilation failure
+    patchfiles-append  patch-setup.py.diff
+
     build.args-append   --with-cython
     destroot.args-append \
                          --with-cython
