@@ -1,0 +1,11 @@
+--- setup.py.orig	2026-10-01 07:45:55
++++ setup.py	2026-10-01 07:45:59
+@@ -46,7 +46,7 @@
+         "openpyxl/worksheet/_writer.py",
+         "openpyxl/utils/cell.py",
+         ],
+-        nthreads=3,
++        nthreads=0,
+         language_level=3,
+     )
+ 

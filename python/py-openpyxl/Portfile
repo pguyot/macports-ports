@@ -33,6 +33,12 @@ if {${name} ne ${subport}} {
 
     python.pep517       no
 
+    # Cython's cythonize() defaults to a 3-worker ProcessPoolExecutor here;
+    # that pool has been observed to abort mid-build with BrokenProcessPool
+    # on macOS. Only 3 small files are cythonized, so force serial
+    # compilation instead.
+    patchfiles-append  patch-setup.py.diff
+
     build.args-append   --with-cython
     destroot.args-append \
                          --with-cython
