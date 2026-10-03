@@ -4,7 +4,7 @@ PortSystem              1.0
 PortGroup               github 1.0
 PortGroup               cmake 1.1
 
-github.setup            arm arm-toolchain 22.1.0 release- -ATfE
+github.setup            arm arm-toolchain 23.1.0 release- -ATfE
 name                    arm-toolchain-embedded
 revision                0
 categories              cross lang
@@ -18,9 +18,9 @@ long_description        Arm Toolchain for Embedded is a baremetal toolchain \
 
 homepage                https://github.com/arm/arm-toolchain
 
-checksums               rmd160  c6369eca5931c8114c27093fc8d09fcc8353712c \
-                        sha256  572edf6a2d001485a871093807858b4e3ae18390ff3de06faad28dd8cb51087f \
-                        size    258364643
+checksums               rmd160  abb3f88a05a0469f3a63546880dd1e56348dc0ce \
+                        sha256  50ae18c4ec2dade0b30832575023e16b96a203aec69acefbaca0a31eb4e0e118 \
+                        size    277758287
 
 set sub_prefix          ${prefix}/libexec/${name}
 
