@@ -1,0 +1,15 @@
+--- CMakeLists.txt.orig
++++ CMakeLists.txt
+@@ -344,12 +344,6 @@
+         set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_EXECUTABLE}" CACHE FILEPATH "" FORCE)
+         set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_EXECUTABLE}" CACHE FILEPATH "" FORCE)
+     endif()
+-endif()
+-
+-# If lld is available then use it by default.
+-find_program(LLD_EXECUTABLE lld)
+-if(LLD_EXECUTABLE)
+-    set(LLVM_USE_LINKER lld CACHE STRING "")
+ endif()
+ 
+ # A lot of files get installed which makes the install messages too
