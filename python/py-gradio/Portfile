@@ -4,7 +4,7 @@ PortSystem          1.0
 PortGroup           python 1.0
 
 name                py-gradio
-version             6.26.0
+version             6.29.1
 revision            0
 categories-append   devel
 license             Apache-2
@@ -23,9 +23,9 @@ long_description    Gradio is the fastest way to demo your machine \
 
 homepage            https://gradio.app
 
-checksums           rmd160  e9568775bcd54a78f964920c671c55784b1241f0 \
-                    sha256  f2a6a65580ce480ed51c0caacf79f159da000a954c54b1518716826f78bfb558 \
-                    size    45131873
+checksums           rmd160  e9fe88729c014cb3c5f65db0d8ae5ae27ddcedb1 \
+                    sha256  e7309025b692579b8829e985f6babf3c6476b598b02ced2b5dd6fcc9713b939e \
+                    size    45108917
 
 if {${name} ne ${subport}} {
     depends_build-append \
