@@ -4,7 +4,7 @@ PortSystem          1.0
 PortGroup           python 1.0
 
 name                py-av
-version             18.1.0
+version             19.0.1
 revision            0
 
 categories-append   multimedia
@@ -21,9 +21,9 @@ long_description    PyAV provides Pythonic bindings for FFmpeg. It \
 
 homepage            https://pyav.basswood-io.com
 
-checksums           rmd160  a8fce876cf11aa31d0d2b55322a227a32807bb66 \
-                    sha256  47bfc286e1bc9de7ab4681fc2b575cd2460a66919d31ffe1bd5aa54fae531a28 \
-                    size    4451061
+checksums           rmd160  8cab5be3a7e1791c9c881a6898aaedc03f5d1d42 \
+                    sha256  08674930eaf1af78a3ed8f93d3ba49383323b3a867e84349d9c399e36f7497da \
+                    size    4274648
 
 python.versions     313 314
 
