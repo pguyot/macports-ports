@@ -4,7 +4,7 @@ PortSystem          1.0
 PortGroup           python 1.0
 
 name                py-telnetlib3
-version             5.0.1
+version             5.0.2
 revision            0
 
 categories-append   net
@@ -21,9 +21,9 @@ long_description    telnetlib3 is a Telnet client and server library \
 
 homepage            https://github.com/jquast/telnetlib3
 
-checksums           rmd160  3cfe10a76775e577faf630f164cdaf47d1492eaa \
-                    sha256  6fde197ffb71cf26ad27fe2c88694d8364f4b1cc962a37762e0cf7e79b9afaed \
-                    size    358644
+checksums           rmd160  271f1b92790384359d56b5bba0ec961352df3975 \
+                    sha256  30bee6ccbacc5c7540ae1a4fb990809eb81993d98900597c0795a5d1ad45e40f \
+                    size    360994
 
 python.versions     313 314
 
