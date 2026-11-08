@@ -8,7 +8,7 @@ name                riscv64-unknown-linux-gnu-gcc
 set gcc_version     16.1.0
 set musl_version    1.2.6
 set glibc_version   2.43
-set uclibc_version  1.0.58
+set uclibc_version  1.0.60
 
 # ── subport declarations ──────────────────────────────────────────────
 subport riscv64-linux-gcc-bootstrap {}
@@ -216,9 +216,9 @@ if {${port_type} eq "bootstrap"} {
         dist_subdir     uclibc-ng
 
         checksums       uClibc-ng-${uclibc_version}.tar.xz \
-                            rmd160  9cfae9e13b3869597d8b3d0d8cc07d86357e34f2 \
-                            sha256  9e8100a442f7079b9728ca286e3035f67df0578606166ea2d1ef865a4a12ddb9 \
-                            size    1991796
+                            rmd160  828c1bef2f9b6eee196420443f62215a8687a5e3 \
+                            sha256  4ff2ca4de4fe47e85b8ce9a62f73e3f05c9bc675de8349fccd0d224574357c44 \
+                            size    2138560
 
         use_xz          yes
         worksrcdir      uClibc-ng-${uclibc_version}
@@ -318,6 +318,11 @@ if {${port_type} eq "bootstrap"} {
             # Fix .oS/.os case collision on macOS (same issue as glibc)
             system "find ${worksrcpath} \\( -name 'Makefile*' -o -name 'Makerules' -o -name 'Rules*' -o -name '*.mk' -o -name '*.mak' \\) \
                 -exec ${prefix}/bin/gsed -i 's/\\.oS\\b/.oSp/g' {} +"
+
+            # 1.0.60 calls signbit() from libc's printf, but __signbit lives
+            # in libm which is not linked into libc.so: use the builtin.
+            reinplace "s|if (signbit(x))|if (__builtin_signbit(x))|" \
+                ${worksrcpath}/libc/stdio/_fpmaxtostr.c
 
             # No shipped defconfig for riscv64; create a minimal .config
             set fd [open ${worksrcpath}/.config w]
